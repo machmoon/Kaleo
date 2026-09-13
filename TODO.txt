@@ -1,0 +1,1710 @@
+TODO — agent layer (from DEVPOST.md "[not yet built]" section)
+
+Decision (2026-08-30): James reversed the 2026-08-29 archive decision. ADK 2.8
+dynamic workflows now drive the pipeline, tracked as feature 12 below, and
+SILKSCREEN_ENGINE selects which driver runs. For the record, the idea had been
+archived a day earlier because the SDK implementation already covered the agent
+behaviour (analysis in docs/agent-framework.md); the reversal moves the
+framework claim onto ADK itself rather than onto a wrapper around the SDK.
+
+2026-08-30: the pipeline emits typed stage and model-call events through
+generate_pcb(on_event=...) — an ADK-shaped seam mirroring ADK's callback/event
+model. That is where the ADK workflow attached, exactly as designed.
+
+RAG / retrieval is Leo's lane and is tracked separately — retrieval.py
+(GeminiEmbedder, page-level citations) is the starting point; do not pick up
+retrieval work from this file.
+
+NOTE: DEVPOST's agent section is being rewritten in ADK 2.0 vocabulary as part
+of the adoption — dynamic workflows and nodes, not the template agents of the
+1.x topology it described as the plan.
+
+[EXAMPLES OF PROMPTS]
+These examples stay inside the emitter's current footprint set. That set is
+now wider than the ban these lines used to carry, and the ban is gone: a
+board with no way to get power in and no way to get signals out is not a
+board anybody can build, which is what every prompt below was written around.
+
+Supported today, by kind and package name (rendered in words by
+`board.supported_packages_text()`, which is what the model is actually shown,
+so this list is a copy and that function is the truth):
+
+  kind 'ic'         SOT-223 (3 pins), SOIC (4/6/8/10/14/16/20/24/28),
+                    LQFP (32/44/48/64/100/144), and the named plug-in modules
+  kind 'connector'  Barrel_Jack_5.5x2.1mm, TerminalBlock_2P_5.08mm,
+                    JST_PH_2P/3P/4P, PinHeader_1x02/03/04/05/06/08/10_P2.54mm,
+                    USB_C_Receptacle_Power (6-way, power only)
+  kind 'battery'    BatteryHolder_CR2032, BatteryHolder_AAA_1x
+  kind 'switch'     SW_SPST_TL3305A (SMD tactile push button)
+  kind 'testpoint'  TestPoint_Pad_1.5x1.5mm
+  passives          two-terminal chip R/C/L/D/Y
+
+Still out of demo requests, because nothing draws them: pin *sockets*, IDC and
+ribbon headers, dual-row 2.54 mm headers other than the named modules, slide
+and DIP switches, rotary encoders, relays, USB-A/micro/mini, RJ45, SD sockets,
+Keystone test posts and loops, and any USB-C receptacle with data pins. A
+request naming one of those is refused by `_footprint_for_device` with the
+list above -- it does not silently become something else -- but a demo that
+gets refused is still a demo that fails.
+
+Two things a connector prompt should say out loud, because they are true of
+what gets emitted: the USB-C receptacle's four shield tabs are **not** drawn
+(they are 0.6 x 1.2 mm slots and `Pad` carries one round drill), so a real
+build adds them by hand; and the tactile switch drawn is the TL3305**A**,
+whose actuator is 3.8 mm -- see feature 29 below for what that costs the case.
+
+- A minimal 3.3 V LDO regulator using an AMS1117-3.3 in SOT-223, with a
+  10 uF input capacitor from VIN to GND and a 22 uF output capacitor from
+  +3V3 to GND. Use only the regulator and passive components; do not add
+  connectors, headers, switches, buttons, or test points.
+- A roughly 1 Hz LED blinker using an NE555D in SOIC-8 on a +9 V rail, with
+  astable timing resistors and capacitor, 100 nF supply decoupling, and one
+  LED with a series current-limiting resistor. Use only the SOIC IC and
+  two-terminal passives; do not add connectors, headers, or switches.
+- A minimal ATtiny85-20SU board in SOIC-8 on a +5 V rail, with a 100 nF VCC
+  decoupling capacitor, a 10 kOhm reset pull-up, and a status LED with a
+  series resistor on PB1. Do not add an ISP header, connectors, buttons, or
+  test points.
+- A buffered 2.5 V reference on a +5 V rail using an LM358D in SOIC-8: two
+  10 kOhm resistors form the divider, one amplifier is a voltage follower,
+  the unused amplifier is tied to a defined state, and the supply has a
+  100 nF decoupling capacitor. Do not add connectors or test points.
+- Reviewer demo: an AMS1117-3.3 regulator in SOT-223 with a 10 uF input
+  capacitor and a 22 uF ceramic output capacitor. Use only the regulator and
+  passive components, and preserve the ceramic output-capacitor choice so the
+  adversarial review can check it against the selected AMS1117 datasheet.
+- Connector demo (the one a person can actually build and plug in): a 3.3 V
+  supply board that takes power on a 5.5 x 2.1 mm barrel jack, regulates it
+  with an AMS1117-3.3 in SOT-223 with a 10 uF input and 22 uF output
+  capacitor, brings +3V3 and GND out on a 2-pin 5.08 mm screw terminal, and
+  breaks +3V3, GND and two spare pins out on a 1x04 0.1 inch header. Add a
+  1.5 mm test pad on +3V3.
+- Connector demo, USB-C variant: the same 3.3 V supply taking power from a
+  6-way power-only USB-C receptacle with the two 5.1 kOhm CC pull-downs to
+  GND that make a charger deliver 5 V, an SMD tactile push button pulling a
+  NRST net down against a 10 kOhm pull-up to +3V3, and a 1x04 header. Say in
+  the request that the receptacle's shield tabs are added by hand.
+
+FEATURES
+--------
+[DONE-SDK] means shipped on the plain SDK path; the ADK re-expression of that
+feature is tracked under feature 12.
+
+ #   Feature / sub-feature                             Status        Note
+ --  ------------------------------------------------  ------------  --------------------------------------------
+ 1   Pipeline sequence                                 [DONE-SDK]    now: ADK Workflow node
+ ----- Read/propose+validate/place/review sequence     [DONE]        validation is embedded in propose.py
+ ----- Model protocol seam; stages never see the SDK   [DONE]        model.py; ScriptedModel keeps tests offline
+ ----- ADK SequentialAgent re-expression               [SUPERSEDED]  ADK 2.0 dynamic workflows took its place; the
+                                                                     template class still ships, see feature 12
+ 2   Parallel datasheet reads                          [DONE]        now: the R11 rung under feature 12
+ ----- asyncio.gather fan-out, one read per part       [DONE]        read_stage in stages.py; runs under both the
+                                                                     SDK and ADK drivers, see 12 R11
+ ----- Client concurrency decided and tested           [DONE]        one shared agent_model/GeminiModel client
+                                                                     across concurrent reads, not one per task
+ ----- Failure isolation + concurrency cap             [DONE]        cap 4 concurrent reads (MAX_CONCURRENT_READS,
+                                                                     stages.py); a failing part emits read.failed
+                                                                     and is dropped, the batch only raises if every
+                                                                     requested part fails
+ 3   Validation repair loop                            [DONE-SDK]    now: for-loop inside an ADK node
+ ----- Batched error collection, all failures at once  [DONE]        parse_circuit_spec, netlist.py
+ ----- Bounded loop, ends when the IR validates        [DONE]        propose.py
+ ----- A pin on two nets rejected at validation        [DONE]        landed in PR #10, which also edits
+                                                                     netlist.py. Two nets sharing a pin are
+                                                                     electrically one and every consumer resolved
+                                                                     it differently. Batched with the rule below
+                                                                     so the repair loop corrects the model.
+ ----- Two pin names on one pin number rejected        [DONE]        Greptile P1 on PR #10: the number is what
+                                                                     reaches the footprint and the symbol, so the
+                                                                     second name overwrote the first and one
+                                                                     specified connection vanished from both
+                                                                     emitted files without raising.
+ ----- ADK LoopAgent wrapper                           [SUPERSEDED]  the bounded loop is plain Python inside a
+                                                                     node under ADK 2.0; see feature 12
+ 4   Adversarial reviewer                              [DONE-SDK]
+ ----- Refute-not-confirm prompt                       [DONE]        review.py
+ ----- Findings filtered against the actual spec       [DONE]        review.py. Unknown part refs AND unknown net
+                                                                     names are stripped; a finding naming only
+                                                                     invented ones is dropped. On top of that the
+                                                                     critic must state its PREMISES in structured
+                                                                     form ("claims": value / connected / floating /
+                                                                     pin_count), each checked against the validated
+                                                                     CircuitSpec by SpecIndex, and a finding resting
+                                                                     on a premise the spec refutes is dropped with
+                                                                     the refutation named in ReviewReport.dropped.
+                                                                     An undecidable premise NEVER drops a finding --
+                                                                     "could not check" must not read as "false".
+                                                                     A finding stating no checkable premise says so
+                                                                     on Finding.checks rather than saying nothing.
+                                                                     Same shape as meetings/intent.py's quote filter.
+                                                                     OPEN: ReviewReport.as_dict() still omits dropped
+                                                                     and merged, so the wire cannot tell a quiet
+                                                                     filter from a quiet critic. One line here plus
+                                                                     three service/tests that assert that dict by
+                                                                     EXACT equality (test_generate_summary.py x2,
+                                                                     test_steps.py::test_status_carries_the_review_
+                                                                     block_before_and_after_the_step). The CLI shows
+                                                                     both lists and the stream emits review.dropped
+                                                                     / review.merged in the meantime.
+ ----- Specialised reviewer split, merged verdict      [DONE]        review.py. Domain = power/signal/
+                                                                     manufacturability/general on every Finding;
+                                                                     ONE model call carrying all three lenses, not
+                                                                     three calls -- measured, docs/critic-split.md.
+                                                                     Merge is semgrep's dedup_and_sort shape (sort,
+                                                                     keep first per key, sort again; severity kept
+                                                                     OUT of the key and resolved by preference, the
+                                                                     harshest wins), exact pass before heuristic per
+                                                                     sarif-sdk's ResultMatchingBaselinerFactory, and
+                                                                     every merge is named in ReviewReport.merged and
+                                                                     emitted as review.merged. Finding.agreed_by is
+                                                                     the confidence signal (which specialists agreed)
+                                                                     -- never a model self-reported number.
+ ----- Refutation round over surviving findings        [PARTIAL]     review.py run_review(refute=True) and
+                                                                     review_stage(refute=...). One BATCHED call, not
+                                                                     one per finding (audit/judgment.py can afford
+                                                                     per-finding behind an effort slider; the
+                                                                     pipeline has none). Allow-list: a finding
+                                                                     survives only on an explicit JSON false, and an
+                                                                     unreadable refuter refuses everything rather
+                                                                     than promoting it unverified. OFF BY DEFAULT --
+                                                                     measured, it killed both false blockers on the
+                                                                     demo boards AND the one true one (docs/
+                                                                     critic-split.md s5), which is the cost of
+                                                                     "default to refuting". OPEN: not reachable from
+                                                                     a command. Needs generate_pcb(refute=...) in
+                                                                     pipeline.py, the keyword on adk RunState and
+                                                                     the review_start node, and a --refute CLI flag.
+ 5   Model tiering                                     [DONE-SDK]
+ ----- FallbackModel chain w/ response validation      [DONE]        resilience.py
+ ----- 3.7-flash primary, 3.5-flash-lite second        [DONE]        service/app.py
+ ----- Per-task routing beyond failover                [IDEA]        vision/reasoning vs mechanical passes
+ ----- Request timeout so a hung primary fails over    [DONE]        60 s http_options deadline (SDK unit: ms) on
+                                                                     GeminiModel + GeminiEmbedder clients; override
+                                                                     SILKSCREEN_MODEL_TIMEOUT_S; timeout -> ModelError
+ ----- Gemma open-weights last-resort rung             [DONE]        gemma-4-31b-it as the third build_model
+                                                                     provider, one attempt; a different model family
+                                                                     is unlikely to share the Gemini tiers' outage
+                                                                     or quota pool. Key-gated live test exercises
+                                                                     the rung for real
+ 6   Confirmation gates on file writes                 [NOT BUILT]
+ ----- Inventory write points, define the gate         [NOT BUILT]   save_board, CLI output, service response
+ ----- CLI confirmation prompt before board write      [NOT BUILT]   with a --yes bypass
+ ----- Service dry-run mode                            [NOT BUILT]   placement report without writing a board
+ 7   Cloud Run deployment                              [PARTIAL]
+ ----- HTTP surface + Dockerfile, tested offline       [DONE]
+ ----- The deploy itself, live URL in README           [DONE]        2026-08-31: gcloud run deploy --source from a
+                                                                     clean main clone; project kaleo-hack-2026,
+                                                                     us-central1; key via Secret Manager, Firestore
+                                                                     db created, GOOGLE_CLOUD_PROJECT set
+ ----- Post-deploy smoke check                         [RE-VERIFY]   /, /models and one real /generate verified
+                                                                     live 2026-08-31: the AMS1117 demo prompt came
+                                                                     back optimal, 5 parts, 3/3 nets routed, in
+                                                                     10.5 s. 2026-09-05: the URL answered 503 on
+                                                                     every route (Google's "not available yet"
+                                                                     page); re-run scripts/smoke.sh --health-only
+                                                                     <url> before any demo, redeploy with
+                                                                     scripts/deploy.sh if it still does.
+                                                                     NOTE: Google's frontend intercepts
+                                                                     /healthz on run.app at the edge (404 before
+                                                                     the container); /readyz is the alias external
+                                                                     probes must use
+ 8   Firestore fact cache                              [DONE]
+ ----- FactStore protocol + MemoryFactStore            [DONE]        service/cache.py; tests need no GCP project
+ ----- Real write-back + preloaded_facts feed-in       [DONE]        commit 4249c5b
+ ----- Ops polish: client reuse, document env var      [PARTIAL]     USE_FIRESTORE is now in .env.example (2026-09-06);
+                                                                     build_store still constructs a Firestore client per
+                                                                     request (known issue 5)
+ 9   Web review UI                                     [PARTIAL]
+ ----- Review page, served by the service at /         [DONE]        frontend/ Svelte SPA; same origin, so no CORS
+ ----- Schematic topology contract + SVG viewer        [DONE]        generic symbols; net-labelled validated pins
+ ----- Board well (Option B), placements in the API    [DONE]        service resolves the geometry; SVG flips Y once
+ ----- Findings cross-highlight across all views       [DONE]        review, schematic and board share selection
+ ----- Grounding toggle on the intent form             [DONE]        sends "ground" only when a datasheet is given
+ ----- Download the emitted .kicad_pcb                 [DONE]        from the board well and the review results
+ ----- In-app debug console + log export               [DONE]        console/window capture; text + NDJSON
+ ----- Persistent chat transcript + artifact cards    [DONE]        friendly activity; raw prompts/responses expand
+ ----- Save/open versioned JSON sessions              [DONE]        transcript, trace, result and board artifact
+ ----- Retry/edit/switch-model recovery controls      [DONE]        failures stay in the transcript for comparison
+ ----- data-testid sweep across every component        [DONE]        stable hooks for e2e and agent QA
+ ----- Voice: spoken intent, findings read aloud       [PARTIAL]     PTT works. The ear is Gemini-STT-as-wake, not Hey Siri. Lock: feature 21
+ ----- Web SPA voice: Web Speech dictation + read-aloud [DONE]       frontend/src/lib/voice.js, seams injected so
+                                                                     vitest fakes the browser: dictation appends to
+                                                                     the intent and clarification fields (Chrome/Edge;
+                                                                     Firefox has no SpeechRecognition and gets a
+                                                                     notice, not a dead button), findings read via
+                                                                     speechSynthesis with per-finding + read-all +
+                                                                     stop, never auto-started; a skipped review is
+                                                                     read as "not run" and a failed one as "not
+                                                                     known", never 0 findings. Browser recognition
+                                                                     service, not /transcribe — separate from the
+                                                                     app/ PTT path under 21. Not built: local-Whisper
+                                                                     dictation; vendor/openwhispr is its reference
+ 10  Service error taxonomy                            [DONE]
+ ----- Split request errors from internal ValueErrors  [DONE]        service/app.py: RequestError(ValueError) is
+                                                                     raised only at field-validation sites (generate(),
+                                                                     order_options, transcribe_request, resolve_placement_policy,
+                                                                     _trace_consent, _experimental_requested, and the
+                                                                     engine-input crossings in generate()/repair_request
+                                                                     that translate a caller-input ValueError from
+                                                                     order.py/constraints.py/placement/api.py); a
+                                                                     _error_response checks isinstance(exc, RequestError)
+                                                                     rather than bare ValueError, so a plain ValueError
+                                                                     from board generation/packing now falls through to
+                                                                     the sanitized 500 + error_id on both /generate and
+                                                                     /generate/stream's run.error frames.
+
+ 11  Live pipeline events                              [DONE]
+ ----- Engine on_event callback, stage+model events   [DONE]        pipeline.py; the ADK-shaped seam (note above)
+ ----- POST /generate/stream, NDJSON frames           [DONE]        service/app.py; run.done carries the one-shot body
+ ----- Chat feed + live stage ticks + console mirror  [DONE]        PipelineFeed.svelte; src 'server' log entries
+ ----- Raw model responses behind a "debug" flag      [DONE]        model.response frames, clipped at 16 kB
+ ----- Raw model requests + correlated call ids       [DONE]        system/user prompts, documents and settings
+ ----- POST /chat/stream, versioned agent events       [DONE]        one clarification or a terminal board result
+ ----- Fallback must never rerun a started run        [DONE]        PR #9 review (P2, genuine), reproduced and
+                                                                     fixed 2026-09-08: api.js generateStream now falls
+                                                                     back to POST /generate on a 404 and on nothing
+                                                                     else. A 200 whose type was rewritten or whose body
+                                                                     cannot be read raises ApiError('internal') saying
+                                                                     the run started and was not sent again --
+                                                                     _generate_stream sends its 200 before self._run,
+                                                                     so the old fallback duplicated every model call.
+                                                                     The regression test asserts the request COUNT
+                                                                     (one), which is the property that costs money.
+                                                                     Rule and sources: urllib3 util/retry.py:197 keeps
+                                                                     POST out of DEFAULT_ALLOWED_METHODS,
+                                                                     openai-python _should_retry never retries a 2xx,
+                                                                     stripe-python retries a POST only behind an
+                                                                     Idempotency-Key. docs/paid-run-safety.md.
+ ----- POST /steps takes an Idempotency-Key           [DONE]        Found by the same audit and reproduced: press
+                                                                     Start, Cancel, Start = two full paid proposes,
+                                                                     because cancel aborts the fetch and the engine
+                                                                     has no session to be told about yet. Every other
+                                                                     step was already safe (advance refuses under
+                                                                     session.lock with "already ran"). start_once in
+                                                                     service/steps.py replays a finished key and 409s
+                                                                     one in flight; useStepRun keeps its key across an
+                                                                     abandoned start and drops it once one answers.
+                                                                     Stripe's design, header and all.
+ ----- SPA submit() has no in-flight guard            [OPEN]        Confirmed by reading, not fixed: App.svelte's
+                                                                     submit() relies on the render (IntentForm only
+                                                                     while the transcript is empty, retry only in
+                                                                     phase 'error') rather than on a guard like
+                                                                     useStepRun's inFlightRef. Holds for real clicks.
+                                                                     App.svelte belongs to the overlay lane; add the
+                                                                     guard when that lane is free.
+ ----- /generate takes no idempotency key             [OPEN]        Two identical POSTs are two runs. No client in
+                                                                     this repo sends the same one twice, so it is a
+                                                                     gap rather than a defect; closing it means
+                                                                     holding a whole board per key in memory.
+ ----- A streamed run is unaddressable                [DONE]        Closed 2026-09-08. service/runs.py registers a
+                                                                     run before any work starts; the id rides the
+                                                                     X-Kaleo-Run-Id response header (so it survives a
+                                                                     body the client cannot parse), run.accepted, and
+                                                                     every terminal frame. GET /runs/<id> polls,
+                                                                     POST /runs/<id>/cancel stops it through the
+                                                                     callback-raises seam the pipeline already had
+                                                                     (amend.py::check_cancelled does the same for a
+                                                                     step session, and the answer vocabulary is
+                                                                     copied from it). The caller may name the run on
+                                                                     the REQUEST header too -- LiteLLM's
+                                                                     x-litellm-call-id -- so a request that gets no
+                                                                     response at all is still pollable. Rejoin is
+                                                                     status-only and says so: no result is kept, a
+                                                                     board is megabytes. docs/paid-run-safety.md §7.
+ ----- Wire billing/ around a run                     [DONE]        Closed 2026-09-08, and it was genuinely called
+                                                                     from nothing before (re-verified by grep).
+                                                                     service/metering.py reserves an estimate before
+                                                                     the 200, commits the measured wall-clock after,
+                                                                     and releases-with-consumption on error, cancel
+                                                                     or client disconnect -- what it used, never
+                                                                     zero. Overage not cutoff; past limit_mkcu is a
+                                                                     402 before any model call. OFF unless
+                                                                     KALEO_METERING is set, and the off state says so
+                                                                     in words on every run. Prior art is LiteLLM's
+                                                                     budget_reservation.py (reserve ->
+                                                                     reconcile -> release_budget_reservation_on_cancel,
+                                                                     which reconciles to partial cost for the same
+                                                                     stated reason). docs/paid-run-safety.md §7.4-5.
+ ----- Meter /steps and /chat/stream                  [OPEN]        Deliberately not done. A step session's spend
+                                                                     spans many requests with no defined end, so
+                                                                     "one run" is not a thing those routes have:
+                                                                     bill per session (at which step?) or per step
+                                                                     is a product decision. /chat/stream would need
+                                                                     attributing at the generate_board tool
+                                                                     boundary, not the HTTP one.
+ ----- Runs and idempotency keys are per-process      [OPEN]        _RUNS, _STARTED and _SESSIONS are all in-process
+                                                                     and bounded. Two Cloud Run replicas are two of
+                                                                     each: a run started on one cannot be polled or
+                                                                     cancelled through the other. Needs a shared
+                                                                     store, which is a deployment decision.
+
+ 12  Google ADK adoption (dynamic workflows)           [PARTIAL]     ADK 2.8 owns orchestration; SILKSCREEN_ENGINE
+                                                                     selects the driver
+ ----- R1 install + offline smoke                      [DONE]        google-adk 2.8 imports and runs with no key
+ ----- R2 spike: workflow, state, exceptions           [DONE]        throwaway, in the scratchpad, never committed
+ ----- R3 dependency + pin                             [DONE]        adk extra; google-genai pinned >=2.19,<3
+ ----- R4 stages.py shared stage bodies                [DONE]        one body per stage, both drivers call it
+ ----- R5 @node graph in adk/workflow.py               [DONE]        read, propose, place and review as nodes
+ ----- R6 in-process runner in adk/runner.py           [DONE]        Runner and session per run; token registry
+ ----- R7 engine dispatcher, default "sdk"             [DONE]        kwarg > SILKSCREEN_ENGINE > default
+ ----- R8 parity suite, test_adk.py                    [DONE]        same events and same result on both engines
+ ----- R12 Dockerfile + setup gain the adk extra       [DONE]        image, CI and setup all install the extra
+ ----- R10 default engine flips to adk                 [DONE]        gate passed 2026-08-30: live SPA run,
+                                                                     optimal placement, failover observed
+ ----- LLM root orchestrator + generate_board tool     [DONE]        ADK LlmAgent decides clarification vs tool call
+ ----- Gemini models.list discovery + Auto policy     [DONE]        /models; server-filtered retry choices
+ ----- R9 agents dir for adk web and /docs             [NOT BUILT]   a dev surface only, off the request path
+ ----- R11 parallel reads via asyncio.gather           [DONE]        closes feature 2; read_stage runs uncached
+                                                                     reads through asyncio.gather (asyncio.to_thread
+                                                                     per read, capped at 4 concurrent via a
+                                                                     semaphore); test_agents.py has an
+                                                                     order-independent multi-part event test
+ ----- R13 ScriptedLlm(BaseLlm) adapter                [DONE]        agents/adk/scripted_llm.py; scripts
+                                                                     text/tool-call turns as LlmResponse via the
+                                                                     real async generate_content_async contract;
+                                                                     test_scripted_llm.py covers clarification,
+                                                                     tool-call, and a full offline orchestrator
+                                                                     run through generate_pcb
+ ----- R14 Pydantic transport schemas                  [NOT BUILT]   CircuitSpec stays a dataclass; the batched
+                                                                     ValidationError must survive
+ ----- R15 review as an LlmAgent                       [NOT BUILT]   the first stage to leave the Model protocol
+ ----- R16 FallbackLlm vs RetryConfig                  [NOT BUILT]   served_by and model.retry must survive
+ ----- R17 validate as a real stage                    [IDEA]        today it lives inside propose
+ ----- R18 retire _EventingModel and the SDK path      [IDEA]        only once R10 has held
+
+ 13  ADK reversal: docs and decision record            [PARTIAL]
+ ----- D0 CLAUDE.md ADK decision reversed              [DONE]        the reversal and its three decisions
+ ----- D1 this file: decision, notes, features         [DONE]        12 and 13 added, ADK rows reworded
+ ----- D2 docs/agent-framework.md rewritten            [DONE]        the framework claim now rests on ADK
+ ----- D3 DEVPOST agent section in ADK vocabulary      [DONE]        dynamic workflows, not template agents
+ ----- D4 CLAUDE.md seam, setup, framework claim       [DONE]        layout, dispatcher, extras, known issue 6
+ ----- D5 check_docs --fix once counts settle          [OPEN]        run after the ADK tests land
+
+ 14  Schematic emission (.kicad_sch + .kicad_pro)     [DONE]        PR #10; a run leaves a KiCad project, not
+                                                                     one board file
+ ----- Generated symbols, embedded lib_symbols         [DONE]        opens where no KiCad library is installed
+ ----- Net-label stubs, one per validated pin          [DONE]        pin-level, matching netlist.py's contract
+ ----- Shared refs so C3 is C3 in both files           [DONE]        CircuitSpec.assign_refs; both emitters call it
+ ----- Verified by KiCad's own ERC                     [DONE]        kicad-cli 8.0.9: 0 errors. Found and fixed
+                                                                     four geometry bugs first, incl. every
+                                                                     passive's net label drawn on its own body
+ ----- Sheet layout beyond one A4 page                 [NOT BUILT]   overflow is reported, not paginated
+ ----- Surface the EMITTED .kicad_sch in the web UI    [OPEN]        narrower than it reads, and not a contradiction
+                                                                     of the DONE row above: the SPA DOES draw a
+                                                                     schematic, from the "schematic" topology block
+                                                                     service/app.py:1392 returns (SchematicWell.svelte).
+                                                                     What is missing is the emitted sheet itself --
+                                                                     schematic_stage only writes with an output path
+                                                                     and the service passes none, so there is no
+                                                                     .kicad_sch in the response and no rail row for
+                                                                     that stage. Needs a service-side decision about
+                                                                     returning the sheet, like kicad_pcb.
+ 15  Copper routing (two-layer grid maze router)       [PARTIAL]     PR #10
+ ----- A* over a 0.25 mm lattice, explicit via cost    [DONE]        routing.py
+ ----- Unroutable nets named, never silently dropped   [DONE]        incl. both refusal paths, so a skipped route
+                                                                     cannot report 100% complete
+ ----- Clearance enforced inside the search            [DONE]        was left to a halo that could not claim nodes
+                                                                     another net owned; KiCad DRC found the
+                                                                     resulting short. 14 DRC errors -> 2, and both
+                                                                     survivors are the footprint's own geometry
+ ----- Bounded search, in expansions not seconds       [DONE]        400k total / 150k per net, sized from
+                                                                     measurement; worst case 76s -> under 7s
+ ----- Rip-up and retry                                [DONE]        bounded and deterministic: a blocked net
+                                                                     probes for the copper in its way (pads stay
+                                                                     hard), lifts those nets, routes, re-routes
+                                                                     them; losers stay named. Unblocks the order
+                                                                     preflight, which refuses unrouted boards
+ ----- Copper-to-board-edge clearance                  [DONE]        the lattice ran out to Edge.Cuts, so a track on
+                                                                     the outermost column had its centreline on the
+                                                                     outline. Latent until the pad escape completed
+                                                                     enough nets to use those columns: measured 10
+                                                                     copper_edge_clearance errors on a generated
+                                                                     LQFP-64 board, 3 at "actual 0.0000 mm". Now an
+                                                                     edge_clearance_nm (0.5 mm, KiCad's own
+                                                                     DEFAULT_COPPEREDGECLEARANCE) excludes lattice
+                                                                     nodes, vias at their wider radius, and escape
+                                                                     stubs, exactly and in integers; a pad inside
+                                                                     the band is named with its measured gap, never
+                                                                     dropped. 10 -> 0 with no other violation
+                                                                     introduced and no net lost
+ ----- Fine-pitch packages                             [NOT BUILT]   the 0.25 mm grid cannot reach every pin of an
+                                                                     LQFP; measured 6/50 nets on a dense board.
+                                                                     Needs a finer grid or off-grid pad escapes
+ ----- Route the copper in the web UI's board well     [NOT BUILT]   the downloaded .kicad_pcb has tracks; the SVG
+                                                                     board well still draws placement only
+ ----- DRC in CI                                       [IDEA]        kicad-cli is a local gate today; no KiCad on
+                                                                     the runners and installing one would dominate
+                                                                     the job
+
+ 16  SPICE simulation as a verifier                    [PARTIAL]     passive-network verification is real; trusted
+                                                                     IC model sourcing and agent-loop use remain
+ ----- CircuitSpec -> SPICE netlist                   [DONE]        spice/deck.py; the caller supplies sources,
+                                                                     analysis and trusted behavioural models
+ ----- Declarative measurements + assertions          [DONE]        measured value and signed margin per clause
+ ----- ngspice runner, verified end to end            [DONE]        CI checks RC results against closed-form theory
+ ----- LTspice runner                                 [UNVERIFIED]  process launch has not run against LTspice;
+                                                                     real and complex binary RAW have offline fixtures
+ ----- MCP simulate_circuit + spice_capabilities      [DONE]        mcp/server.py; spice/spec.py is the JSON bridge
+ ----- Secure executable-deck boundary                [DONE]        typed MCP input only; directives rejected before
+                                                                     launch; runtime/output controls are bounded
+ ----- Windowed reference bandwidth alignment         [DONE]        numerator and reference use identical windowed
+                                                                     frequency samples; zero reference fails loudly
+ ----- Device models for ICs                          [DONE]        2026-09-08: spice/registry.py is the trusted
+                                                                     registry and the ONLY source of device
+                                                                     behaviour on the agent path -- nothing accepts
+                                                                     SPICE text from a language model, and the
+                                                                     testbench JSON has no field to carry any, since
+                                                                     an invented .SUBCKT yields a simulation that
+                                                                     PASSES. Two sources, never confused: generic
+                                                                     behavioural stand-ins written here from
+                                                                     published topology (spice/library.py -- op-amp,
+                                                                     555, fixed linear regulator, ideal port), and
+                                                                     operator-supplied model files found through
+                                                                     SILKSCREEN_SPICE_MODELS. Nothing is vendored:
+                                                                     TI's and ADI's own licences restrict
+                                                                     redistribution and tie use to their parts, so a
+                                                                     manufacturer model is the operator's to install
+                                                                     (docs/spice-models.md). Every entry carries
+                                                                     provenance -- source, licence, generic flag,
+                                                                     and a note naming what it cannot answer -- and
+                                                                     that reaches SubcircuitModel, the deck's
+                                                                     warnings and SimulationResult.substitutions.
+                                                                     A generic substitution the caller did not name
+                                                                     in Testbench.accept_generic_models is still
+                                                                     promoted to an error by strict, which is the
+                                                                     GENERIC_DIODE rule carried to devices; naming a
+                                                                     part the circuit lacks is a hard error, the
+                                                                     edge_refs convention. Registered LDO, NE555 and
+                                                                     LM358 boards now simulate against closed-form
+                                                                     theory computed inline; a microcontroller, an
+                                                                     adjustable regulator and a crystal each refuse
+                                                                     with their own reason. Shape follows KiCad
+                                                                     eeschema/sim (SIM_LIBRARY::FindModel returns
+                                                                     nullptr on a miss; no model library ships) and
+                                                                     deliberately not ngspice's "Unable to find
+                                                                     definition of model <name> - default assumed".
+ ----- Wire simulation into the agent loop            [PARTIAL]     2026-09-06: opt-in `simulate=True` / `--simulate` / `"simulate": true` — agents/simulate.py proposes a testbench, simulate_stage runs it on a worker thread, failed clauses land on result.simulation.findings; not yet on the step routes, overlay, Slack or Workspace cards, and no repair feedback
+
+ 17  Verifiable placement repair                       [PARTIAL]
+ ----- Portable geometry and backend-neutral reward   [DONE]        silkscreen/placement/
+ ----- Company hard rules and soft preferences        [DONE]        compact-control + thermal-first
+ ----- Generated-board adapter                        [DONE]        verifier runs before routing; write-back remains
+                                                                     integer nanometres and may expand a tight outline
+ ----- Gemini and deterministic action policies       [DONE]        bounded verifier-gated loop
+ ----- Experimental Ollama/Tinker policies            [DONE]        explicit default-off UI + server environment gate
+ ----- Engineer correction memory                     [PARTIAL]     request/session-local lab only; tenant durability
+                                                                     still requires authentication and ownership
+ ----- Integrated placement view and JSON download    [DONE]        generated boards, receipts and session export
+ ----- Synthetic behavior-cloning trajectory export  [DONE]        no trained checkpoint claimed
+ ----- Measured on real generated boards              [DONE]        2026-09-08: scripts/placement_repair_demo.py, the
+                                                                     simulate_demo.py convention (no key, no network,
+                                                                     never collected). Seven boards: the four TODO
+                                                                     demo prompts, the connector demo and LQFP-32/48/64
+                                                                     stress boards. Every result number is recomputed
+                                                                     by silkscreen.audit.geometry off the emitted
+                                                                     .kicad_pcb, never by the placement package.
+ ----- verifier_board judged the wrong rectangle      [FIXED]       2026-09-08. It projected board.width_nm/height_nm,
+                                                                     the PACKING rectangle, as the outline. The board
+                                                                     KiCad opens is DEFAULT_BOARD_MARGIN_NM (2 mm)
+                                                                     larger on every side (board.emit_kicad_pcb), so a
+                                                                     part flush against the packing box was reported
+                                                                     as crossing an edge 2 mm further out. Measured
+                                                                     before the fix: 7/7 boards carried phantom
+                                                                     boundary violations (1-5 each), and _profile_frame
+                                                                     answered by growing the SHIPPED board 0.35-0.85 mm.
+                                                                     After: 0/7. adapter.OUTLINE_MARGIN_MM is now the
+                                                                     one place the offset lives, applied in
+                                                                     verifier_board and inverted in
+                                                                     apply_verified_board, and
+                                                                     engine/tests/test_placement_frame.py pins the
+                                                                     projection against an independent reader of the
+                                                                     file. Prior art: OpenROAD src/dpl/src/
+                                                                     CheckPlacement.cpp, where Opendp::overlap takes
+                                                                     coordinates from getDbInst()->getLocation()
+                                                                     rather than from the placer's own grid.
+ ----- Preference pass has no net model               [OPEN]        NOT FIXED, deliberately -- changing the objective
+                                                                     is a design call and service/steps.py plus the
+                                                                     SPA read the stage's numbers. With the frame bug
+                                                                     fixed the hard half never fires on a generated
+                                                                     board (0/7 violations, 0/7 outline growth, the
+                                                                     repair oracle never runs), so 100% of what this
+                                                                     stage changes is pcb_repair._optimize_preferences
+                                                                     coordinate-descending on compactness/grouping.
+                                                                     That objective knows nothing about nets, and
+                                                                     measured against HPWL recomputed from the emitted
+                                                                     pads it made 2/7 boards WORSE: connectors
+                                                                     +3.8 mm, lqfp64 35.9 -> 47.6 mm (+33%), with a
+                                                                     single part moved 7.7 mm. It also erodes the
+                                                                     courtyard spacing CP-SAT reserved for silkscreen
+                                                                     designators, down to the profile clearance
+                                                                     (1.000 -> 0.625 mm on the connector board).
+                                                                     Options: give the preference pass the HPWL term,
+                                                                     or stop running it when hard == 0 on entry.
+ ----- Profiles name the demo board's refs            [OPEN]        compact-control/thermal-first hard-code
+                                                                     fixed_refs=("J1",), groups=(("U1","C1","C2"),
+                                                                     ("U2","Q1")) -- the refs of pcb_repair.demo_board.
+                                                                     Applied to a generated board those refs mean
+                                                                     whatever the ref assigner happened to number, and
+                                                                     _grouping_cost/_connector_edge_cost skip a ref the
+                                                                     board lacks SILENTLY. Everywhere else in this repo
+                                                                     a ref naming nothing is a hard error (packing.py
+                                                                     edge_refs, board.py rotatable_refs, kicad.py
+                                                                     to_parts). This is the lqfp64 regression above:
+                                                                     the group ("U1","C1","C2") dragged two decoupling
+                                                                     capacitors across the die. At minimum the drops
+                                                                     should be reported the way SpecReview.dropped
+                                                                     reports its filter.
+ ----- applied=False is unreachable in practice       [OPEN]        The stated honesty rule ("incomplete bounded
+                                                                     repairs remain visible but are not applied") is
+                                                                     real code and is tested, but on the deterministic
+                                                                     path it cannot fire for a generated board:
+                                                                     _profile_frame grows the outline until every
+                                                                     movable part can be made legal. Reaching it in
+                                                                     test_placement_frame.py needs a profile that pins
+                                                                     two parts with fixed_refs at an impossible
+                                                                     clearance. Worth knowing before quoting the rule
+                                                                     as a live safeguard.
+
+ 18  Slack integration                                 [DONE, unverified live]
+ ----- Signed events + slash commands, threaded runs  [DONE]        slackbot/app.py; HMAC before parse, event_id dedup
+ ----- design / place / review verbs over the pipeline[DONE]        slackbot/runner.py; calls generate_pcb unchanged
+ ----- Board preview + .kicad_pcb into the thread     [DONE]        slackbot/render.py; SVG always, PNG with Pillow
+ ----- Prepared fabrication order, never submitted    [DONE]        slackbot/order.py. DELIBERATE BOUNDARY: the bot
+                                                                     prepares an order and stops. No vendor call, no
+                                                                     submission, no payment path exists, and
+                                                                     test_order.py enforces it by import (only
+                                                                     slack.py may import a network module). A human
+                                                                     confirms before money is spent. If ordering is
+                                                                     ever taken further, that gate is the design, not
+                                                                     an obstacle to route around.
+ ----- Slack protocol checked against Slack's own src [DONE]        2026-09-08: signature, retries, Block Kit limits and
+                                                                     the three-step upload read out of
+                                                                     slackapi/python-slack-sdk and the published method
+                                                                     pages, cited at each constant. Two real errors, both
+                                                                     silent: step 2 of the file upload wrapped the bytes
+                                                                     in a hand-built multipart envelope while step 1 had
+                                                                     already declared length=len(content), so the stored
+                                                                     .kicad_pcb would have been the envelope (the SDK's
+                                                                     _upload_file_via_v2_url POSTs raw bytes, no headers);
+                                                                     and files.getUploadURLExternal was a GET where the
+                                                                     docs and the SDK both say POST. The old test asserted
+                                                                     `content in body`, which the envelope satisfied --
+                                                                     the test agreed with the code, not the world. Also
+                                                                     hardened: the spend guard no longer rests on the
+                                                                     unpublished assumption that a retry reuses event_id
+                                                                     (a second key from team/type/channel/ts), and a
+                                                                     duplicate answers x-slack-no-retry: 1.
+ ----- Web API Retry-After header is not read         [OPEN]        slack.py's HttpResponse carries status and body only,
+                                                                     so SlackClient._retry_after always falls back to its
+                                                                     one-second floor; Slack puts the wait on the
+                                                                     Retry-After header of a 429. Slow, never wrong --
+                                                                     the loop gives up with a named `ratelimited` rather
+                                                                     than hot-looping -- but reading it means widening
+                                                                     the Transport seam. Documented at the function.
+ ----- Test against a real Slack workspace            [OPEN]        Built against the API and never run against a
+                                                                     live workspace: no app was created and no token
+                                                                     requested. Request construction is covered by
+                                                                     tests against a recorded transport, but a scope
+                                                                     or payload detail could still be wrong on the
+                                                                     first real run.
+ ----- Promote the placements geometry serializer     [OPEN]        slackbot/render.py imports the private
+                                                                     service.app._placements_dict rather than
+                                                                     duplicating the rotation and pad-offset maths.
+                                                                     Duplicating it is the board-destroying bug class,
+                                                                     so importing was right, but it wants to be public
+                                                                     on the engine or a shared module. Left alone
+                                                                     because another session was in the engine.
+ ----- Persist run records across a restart           [OPEN]        Runs are remembered per thread in memory, so
+                                                                     review/order forget after a restart (the bot says
+                                                                     so rather than acting on the wrong board). A
+                                                                     second replica would need a real store.
+ 19  Google Meet front end (transcript -> board)       [PARTIAL]     meetings/; Meet REST API v2, read after the
+                                                                     conference ends
+ ----- Meet REST API v2 client, stdlib only            [DONE]        meet.py; conference records, transcripts and
+                                                                     entries, paging capped at 50 pages
+ ----- Response shapes checked vs the discovery doc    [DONE]        2026-09-08: field names, page keys, enums and page-size
+                                                                     limits checked against Google's public discovery
+                                                                     document (meet.googleapis.com/$discovery/rest?version=v2,
+                                                                     rev 20260903) -- no credential needed, so it is
+                                                                     re-derivable. Confirmed: transcriptEntries (not
+                                                                     entries), participant/text/languageCode, endTime unset
+                                                                     == ongoing (Google's own words), and that
+                                                                     meetings.space.readonly alone covers every read path.
+                                                                     Fixed: no pageSize was sent on transcripts/entries, so
+                                                                     the documented default of 10 x the 50-page cap capped a
+                                                                     whole conference at 500 utterances -- an ordinary
+                                                                     meeting hit the cap and raised. Now 100 (the documented
+                                                                     max). Added: a transcript in state STARTED is still
+                                                                     being written, and is now skipped with a named
+                                                                     MeetError rather than half-read
+ ----- No headless browser, no fake participant        [DONE]        deliberate: every open-source meeting bot joins
+                                                                     as a bot; this reads the finished transcript
+ ----- Transport Protocol seam, offline tests          [DONE]        the one HTTP GET is behind a protocol, the same
+                                                                     seam as Model/ScriptedModel
+ ----- Config validated at construction                [DONE]        config.py: MEET_ACCESS_TOKEN, MEET_SPACES,
+                                                                     MEET_API_BASE, MEET_MAX_AGE_HOURS,
+                                                                     MEET_MAX_RUNS_PER_POLL; https api_base enforced
+ ----- Runner: transcript -> requests -> board         [DONE]        runner.py; generate_pcb imported lazily, and one
+                                                                     failing request never sinks the others
+ ----- Quoted-evidence and confidence gates            [DONE]        a request not quotable from the transcript is
+                                                                     dropped; below the 0.6 floor it is recorded, not
+                                                                     built
+ ----- Skipped requests always reported                [DONE]        MeetingReport.considered is separate from runs, so
+                                                                     a skipped request cannot go invisible
+ ----- Nothing is ever ordered from a meeting          [DONE]        a board a meeting merely implied is exactly the
+                                                                     wrong thing to spend money on
+ ----- meetings/intent.py (extract_requests)           [DONE]        intent.py; the model's answer is validated like
+                                                                     any other, and a request it cannot quote from
+                                                                     the transcript is dropped
+ ----- Tests for the package                           [DONE]        meetings/tests; all offline, against a recorded
+                                                                     transport and ScriptedModel
+ ----- Run against a real Workspace / live Meet        [OPEN]        unverified live: no call has ever left the
+                                                                     machine; every test drives a recorded transport
+ ----- OAuth token acquisition and refresh             [NOT BUILT]   deliberate: the host supplies MEET_ACCESS_TOKEN
+                                                                     with the read-only scope. An expired token
+                                                                     surfaces as a 401 with no recovery path
+ ----- Durable seen-conference store                   [DONE]        meetings/__main__.py --seen-file: _load_seen /
+                                                                     _save_seen, atomic write via a .tmp replace,
+                                                                     saved in a finally so a crash mid-poll cannot
+                                                                     replay. Still one file per host: two machines
+                                                                     sharing an account would each keep their own
+ ----- Poll loop, entry point or scheduler             [PARTIAL]     meetings/__main__.py has the loop (poll_once in
+                                                                     a while, --interval) so `python -m meetings`
+                                                                     schedules itself. Still no console script in
+                                                                     pyproject and no service/cron deployment
+ ----- Live listening during a meeting                 [NOT BUILT]   would need the Meet Media API, a different and
+                                                                     much larger piece of work
+ ----- Transcription must be on for any of this        [NOT BUILT]   not fixable here: Meet stores no transcript unless
+                                                                     the organiser enabled it. The run says so rather
+                                                                     than reporting an empty meeting
+ 20  Part sourcing and 3D models                       [PARTIAL]     the junior engineer looks the parts up while the
+                                                                     senior one reviews the board in KiCad
+ ----- KiCad-library 3D model per footprint            [DONE]        models3d.py; ${KISYS3DMOD} paths looked up, not
+                                                                     shipped; unmatched packages answer a reason; a gated
+                                                                     test checks every path against the installed
+                                                                     library. GLB export verified with kicad-cli 10.0.6
+ ----- BOM IR, batched validation, deterministic CSV   [DONE]        sourcing.py: bom_rows, parse_sourcing_response,
+                                                                     bom_csv; the netlist.py convention
+ ----- Model proposes MPN + datasheet URL; URL probed  [DONE]        agents/sourcing.py; one repair round, then an
+                                                                     honest unsourced BOM. probe_pdf reads five bytes
+                                                                     behind the grounding SSRF guard and never raises
+ ----- Background stage from the placed snapshot       [DONE]        stages.py sourcing_stage / SourcingJob /
+                                                                     start_sourcing_stage, the enclosure trio's twin
+ ----- Pipeline flag, CLI --bom, /generate field       [DONE]        sourcing=; joined after route, before review
+ ----- Overlay sourcing step, BOM in order manifest    [DONE]        service/steps.py; <stem>-bom.csv, bom.csv in the
+                                                                     zip, background lists "sourcing"
+ ----- BOM table in the overlay's order panel          [DONE]        app StepPanel; a datasheet opens only when verified
+ ----- Verified MPN via a distributor API              [DONE]        agents/distributor.py: Mouser Search API v2 behind
+                                                                     a Transport seam, exact-match host allowlist, three
+                                                                     verdicts (verified/unlisted/unavailable), 20 s
+                                                                     budget, first unavailable stops the batch.
+                                                                     mpn_status gained "verified"; a miss or a failure
+                                                                     stays "proposed" with verify_error in words.
+                                                                     Gated on MOUSER_API_KEY (from_env -> None without
+                                                                     one, so every row stays proposed)
+ ----- Second distributor, stock and lifecycle         [OPEN]        verified means "Mouser lists this exact MPN", not
+                                                                     in stock, not end-of-life-checked, and not that
+                                                                     the package matches the land pattern (Package /
+                                                                     Case is free text). Neutrality decision still open
+ ----- In-app 3D viewer                                [DONE]        app/src/components/ModelViewer.tsx, mounted from
+                                                                     pages/kaleo/components/StepPanel.tsx: reads the
+                                                                     order step's GLB, WebGL2 renderer, says "no WebGL2"
+                                                                     rather than showing a blank canvas, survives a
+                                                                     lost context. "Open 3D model" in KiCad remains
+
+ 21  Ada voice + desk (2-week lock, 2026-09-06)        [LOCKED]      Tech Lead. Do not invent a parallel plan.
+     North star: "Hey Ada" feels like Hey Siri —
+     always-on tiny LOCAL wake classifier, then STT.
+     Apple does not expose custom OS wake. Third
+     parties use Porcupine or openWakeWord.
+     SUPERSEDED 2026-09-07: Porcupine was never
+     built and must not be — its free tier is
+     evaluation-only (~$6K+/yr commercial). No
+     Picovoice dependency exists; wake/mod.rs:6
+     says "Picovoice is not used". What shipped is
+     livekit-wakeword (Apache-2.0) with a locally
+     trained hey_ada head: recall 0.867, zero false
+     accepts/hour at threshold 0.7. cpal owns the mic in Rust. WKWebView is
+     UI only. Gemini POST /transcribe ONLY after
+     wake or PTT — never idle wake spotting.
+     Desk: stop lying that the PNG was used;
+     POST /desk/resolve vision → caption + optional
+     SPA GuidePointer. No KiCad edits.
+     Tree: app/ is Ada. desktop/ is the old sidecar
+     — do not add cpal/Porcupine there
+     (test_desktop_tauri_contract.py forbids it).
+     Exception, and it matters: desktop/kicad_live.py
+     is NOT retired. service/steps.py:252 spawns it by
+     path to show a stage in a running KiCad; deleting
+     or renaming it turns every kicad_live step into
+     "cannot show". Dead: launcher.py, sidecar.py,
+     src-tauri/, silkscreen-app.
+ ----- W1 honesty: demote Gemini wake, PTT primary     [NOT BUILT]   Agent 1. Ear default OFF (CUSTOMIZABLE_VERSION
+                                                                     4). Mac ear is one-shot/off until local KWS.
+                                                                     Kill createWindowListener's VAD→/transcribe
+                                                                     loop. Rewrite Settings/ear/"wake hot loop"
+                                                                     copy. Keep PTT (VoiceButton) as the working
+                                                                     spoken path. Files: app/src/lib/wake-word.ts
+                                                                     + .test.ts; hooks/useWakeWord.ts + .test.tsx;
+                                                                     lib/storage/customizable.storage.ts;
+                                                                     pages/settings/components/WakeWordToggle.tsx;
+                                                                     pages/kaleo/components/EarButton.tsx +
+                                                                     .test.tsx; CompactBar/PromptBar tests if
+                                                                     copy/state attrs change; service/app.py
+                                                                     comments at TRANSCRIBE_QUOTA_RPM /
+                                                                     _transcribe (wake-hot-loop → PTT/post-wake
+                                                                     only); README.md voice row. Do not touch
+                                                                     Rust KWS, /desk/resolve, or desktop/.
+ ----- W1–2 local KWS ("hey Ada")                      [PARTIAL]     Agent 2. Rust spotter + ada-wake shipped
+                                                                     (wake/, livekit-wakeword via ort-tract, oww
+                                                                     stub, mock). NOT libloading Porcupine — that
+                                                                     was planned and never built. Agent 4 still wires post-wake STT
+                                                                     and the mic mutex. New app/src-tauri/src/wake/ (mod.rs
+                                                                     + porcupine + oww fallback). cpal input
+                                                                     stream — do not reuse speaker/'s system-
+                                                                     audio AudioState.stream_task. Register
+                                                                     commands in lib.rs + capabilities. AccessKey
+                                                                     PICOVOICE_ACCESS_KEY is unused and unread.
+                                                                     Emit a Tauri event on wake; do not POST
+                                                                     /transcribe from Rust. Thin TS backend
+                                                                     "local" in wake-word.ts / useWakeWord.ts
+                                                                     (event listener only — no getUserMedia).
+                                                                     Cargo.toml only under app/src-tauri/.
+ ----- W1–2 desk resolve (honest vision)               [NOT BUILT]   Agent 3. Today desk.rs captures PNG and
+                                                                     desk-context.ts throws it away, then claims
+                                                                     "screenshot captured". POST /desk/resolve
+                                                                     (service/app.py + new service/desk.py or
+                                                                     agents/desk.py; ScriptedModel; batched
+                                                                     validate like netlist.py). Client:
+                                                                     app/src/lib/silkscreen/desk.ts. Change
+                                                                     enrichWithDeskContext to a structured
+                                                                     result (png sent or utterance unchanged —
+                                                                     never a fake "screenshot captured" note).
+                                                                     Files: desk-context.ts + .test.ts; desk.rs
+                                                                     (shrink/keep, no invented coords); optional
+                                                                     guide steps consumed by frontend/src/lib/
+                                                                     guide.js + GuidePointer.svelte (testid
+                                                                     targets only). Also fire on PTT deictic
+                                                                     speech (useVoiceInput / VoiceButton), not
+                                                                     only useWakeWord. Tests:
+                                                                     service/tests/test_desk_resolve.py (unique
+                                                                     basename). No KiCad writes, no OS overlay.
+ ----- W2 integration + tests                          [NOT BUILT]   Agent 4. Mic mutex: ear-on local KWS and
+                                                                     PTT GUM cannot both own the device.
+                                                                     capture-permission.ts: after local KWS,
+                                                                     stop probing via getUserMedia for the ear.
+                                                                     pages/kaleo/index.tsx wires wakeAction +
+                                                                     desk + PTT. Invariant tests: ear idle ⇒
+                                                                     zero /transcribe; PTT ⇒ one; local wake
+                                                                     then command ⇒ one. Do not start until
+                                                                     Agents 1–3 have landed their seams.
+ ----- Non-goals this sprint                           [LOCKED]      Custom OS wake; continuous Gemini wake;
+                                                                     SpeechRecognition on Mac WKWebView;
+                                                                     KiCad edits / AX / architecture (b) OS
+                                                                     overlay (docs/guided-cursor.md; capture.rs
+                                                                     does not exist); clicking for the user;
+                                                                     Windows/Linux KWS; training an oww model;
+                                                                     system-audio (speaker/) as wake; Leo RAG;
+                                                                     new markdown docs; commit/push.
+ ----- DoD: "feels like Hey Siri" MVP                  [LOCKED]      (1) Ear default off. (2) Always-on listen
+                                                                     is local KWS only — zero Gemini bytes
+                                                                     while idle. (3) After "hey Ada" or PTT,
+                                                                     one command clip → one POST /transcribe.
+                                                                     (4) Settings/ear name the backend (local
+                                                                     | off), never "engine clips" while
+                                                                     spotting. (5) Deictic speech sends PNG to
+                                                                     /desk/resolve or leaves the utterance
+                                                                     unchanged — no fake screenshot note.
+                                                                     Optional GuidePointer in the SPA only.
+                                                                     (6) PTT still works with the ear off.
+                                                                     (7) Offline tests; no network in the
+                                                                     suite.
+
+ 22  Integrations panel (GET /integrations)            [DONE]        one read-only view of every front end and optional
+                                                                     tool; the desktop renders it at /integrations
+ ----- Aggregated report, four states, always 200      [DONE]        service/integrations.py; unavailable | unconfigured |
+                                                                     partial | ready. 'ready' is about configuration only --
+                                                                     no route makes a live call
+ ----- No secret echoed, not even a tail               [DONE]        a credential shows <set, N chars>; only a path, base
+                                                                     URL or allowlist shows its value
+ ----- One bad probe is not a 500                      [DONE]        a probe that raises becomes that integration's state
+                                                                     and hints; the other nine still answer
+ ----- google derived from deliver.config_report       [DONE]        called, not re-implemented, so /integrations and
+                                                                     /deliver/config cannot disagree
+ ----- Desktop client + card grid                      [DONE]        app/src/lib/silkscreen/integrations.ts (validated,
+                                                                     never a silently empty page); pages/integrations/**
+ ----- Actions beyond google_sign_in                   [OPEN]        the actions array exists and only the Workspace sign-in
+                                                                     populates it today
+
+ 23  Zoom front end (zoombot/)                         [PARTIAL]     the agent sits in the meeting, hears it, and answers.
+                                                                     docs/zoom.md
+ ----- Config validated at construction, every gap     [DONE]        config.py: ZOOM_ENV, redacted() prints masks and
+                                                                     lengths only
+ ----- Webhook: HMAC before parse, replay refused      [DONE]        rtms.verify_webhook; v0 signature over raw bytes, 300 s
+                                                                     window, deliveries remembered by x-zm-trackingid
+ ----- endpoint.url_validation handshake               [DONE]        url_validation_reply; an empty plainToken raises rather
+                                                                     than answering a challenge nobody issued
+ ----- RTMS signalling + media sockets, transcript     [DONE]        open_stream; Connection is a Protocol seam, so the
+                                                                     suite runs offline against a recorded stream
+ ----- Windowed extraction, meetings.intent gates      [DONE]        agent.py; gap/size windows with overlap, quotes de-
+                                                                     duplicated, quote-not-in-transcript dropped
+ ----- Runner + report naming the speaker used         [DONE]        runner.py; considered separate from runs, spoke_via
+                                                                     read off the speaker object
+ ----- HTTP surface, POST /zoom/events + /healthz      [DONE]        app.py; ack first, work on a thread, one concurrent run
+ ----- ChatSpeaker over the Zoom REST API              [DONE-UNVERIFIED]built against the documented surface and a recorded
+                                                                     transport; never run against a live account
+ ----- Audio out: headless Meeting SDK container       [NOT BUILT]   RTMS is receive-only. zoombot/bot/ is a Dockerfile, an
+                                                                     entrypoint and control_stub.py, which refuses every
+                                                                     /say. The SDK binary is not vendored (Zoom's licence).
+                                                                     Not built or run by the suite
+ ----- Run against a real Zoom account                 [OPEN]        unverified live: no webhook, no stream and no chat
+                                                                     message has ever left this code
+ ----- RTMS frame constants checked against Zoom's src [DONE]        2026-09-08: every constant read out of
+                                                                     github.com/zoom/rtms-samples (MIT) and cited at its
+                                                                     definition. Found four errors, all silent-failure
+                                                                     shaped: MSG_TYPE wrong from 5 up (STREAM_STATE_UPDATE
+                                                                     is 8, not 5); STATUS_OK is the integer 0, not the
+                                                                     string "STATUS_OK", so every handshake read as a
+                                                                     refusal; stream/session states are integers, and a
+                                                                     stopped session was reported as a broken stream;
+                                                                     rtms_started is FLAT on payload, not nested under
+                                                                     .object, so session_from_payload raised on every real
+                                                                     event and event_key digested them all identically
+                                                                     (first meeting accepted, every later one "replay").
+                                                                     Confirmed unchanged: the comma-joined handshake base
+                                                                     string, the v0 webhook signature, the 300 s window,
+                                                                     the url_validation reply, the transcript media flag
+                                                                     (a bitmask, 1<<3), the frame field names, and the
+                                                                     timestamp units (SECONDS; the ms fallback now warns)
+ ----- RTMS constants confirmed on the wire            [OPEN]        still unproven: whether Zoom BEHAVES as its own
+                                                                     sample expects. The vocabulary is right; the scopes,
+                                                                     the sockets and the frames are not yet observed
+ ----- Durable run memory / scheduler                  [OPEN]        RunStore is in memory; a restart says NO_RUN_REMEMBERED
+                                                                     rather than answering about another board
+
+ 24  Microsoft Teams front end (teamsbot/)             [PARTIAL]     the zoombot sibling against Graph and Bot Framework.
+                                                                     docs/teams.md
+ ----- Config validated at construction, every gap     [DONE]        config.py: TEAMS_ENV; bot_endpoint required only under
+                                                                     speak_mode=sdk
+ ----- Graph client: token, meetings, transcripts      [DONE]        graph.py; client-credentials only, token in memory,
+                                                                     exact-host allowlist, redirects refused, 50-page cap
+ ----- Four transcript outcomes, four types            [DONE]        TranscriptionDisabled / NoTranscript / TeamsAuth /
+                                                                     TeamsCall -- an agent handed '' concludes the meeting
+                                                                     was silent
+ ----- Inbound JWT verified before the body parses     [DONE]        app.verify_notification: alg, iss, aud=app_id, window,
+                                                                     signature. A missing cryptography or key source
+                                                                     refuses; it never waves a token through
+ ----- Notification replay refused, ack fast           [DONE]        ids remembered (derived from content when absent); the
+                                                                     202 promises acceptance, not a board
+ ----- Windowed extraction + runner, same gates        [DONE]        agent.py WindowPolicy, runner.py run_meeting /
+                                                                     run_transcript; an in-progress meeting is skipped
+ ----- ChatSpeaker: POST /chats/{id}/messages          [DONE-UNVERIFIED]plain text, never HTML; over MAX_MESSAGE_CHARS is
+                                                                     refused, not truncated. Never run against a live tenant
+ ----- Audio out: Graph calling bot with media         [NOT BUILT]   needs Microsoft.Graph.Communications.Calls.Media
+                                                                     (.NET), a media certificate and Calls.AccessMedia.All.
+                                                                     teamsbot/bot/ is the control plane only and POST /say
+                                                                     answers 501 naming what is missing
+ ----- Run against a real Microsoft 365 tenant         [OPEN]        unverified live; also needs a Teams application access
+                                                                     policy, which is a PowerShell grant nobody has run here
+ ----- Bot Framework issuer/key constants checked      [DONE]        2026-09-08, without a tenant: both OpenID metadata
+                                                                     documents fetched (each declares issuer
+                                                                     api.botframework.com and a jwks_uri whose host is
+                                                                     already in KEY_HOSTS), and the issuer/algorithm/skew
+                                                                     constants matched against botbuilder-python and
+                                                                     botbuilder-dotnet source. One error found: the Graph
+                                                                     CALLING path also accepts iss graph.microsoft.com
+                                                                     (microsoft-graph-comms-samples
+                                                                     AuthenticationProvider.cs), so /api/calls refused
+                                                                     every real notification -- now a separate
+                                                                     CALLING_ISSUERS, kept apart from the activity list
+ ----- Bot Framework issuer/key constants confirmed    [OPEN]        ACCEPTED_ISSUERS, OPENID_CONFIGURATION_URLS and
+                                                                     KEY_HOSTS are taken from the samples and documentation;
+                                                                     a wrong iss refuses every call notification (loudly,
+                                                                     not silently)
+ ----- Listen-mode wiring for the calling path         [OPEN]        a call notification carries no text, so it is logged
+                                                                     and dropped; run_transcript is the path that turns a
+                                                                     finished call into requests
+
+ 25  Structured spec review (agenda -> meeting)        [DONE]        a run's open questions become a booked half hour, not a
+                                                                     wall of text. docs/spec-review.md
+ ----- SpecReview IR, bounded, batched validation      [DONE]        engine/silkscreen/specreview.py; 400-char summary, 1..8
+                                                                     items, 15..60 minutes, netlist.py conventions
+ ----- Refs filtered against the board, drops reported [DONE]        the review.py hallucination filter again;
+                                                                     SpecReview.dropped names each one
+ ----- Model call + one repair round, gives up loudly  [DONE]        agents/specreview.py, the sourcing.py shape;
+                                                                     SPECREVIEW_MARKER for ScriptedModel.by_marker; no
+                                                                     evidence means no model call at all
+ ----- Three states kept apart                         [DONE]        review=None (failed), empty items (nothing to discuss),
+                                                                     no result (never ran)
+ ----- googleapps scheduling + --spec-review           [DONE]        googleapps/specreview.py; sendUpdates=all, Meet
+                                                                     createRequest, description HTML-escaped, every unrouted
+                                                                     net named
+ ----- Deterministic agenda when no model ran          [DONE]        agenda_from_result: blockers plus the ratsnest, nothing
+                                                                     invented
+ ----- spec_review deliver destination                 [DONE]        service/deliver.py; booked, skipped-with-reason, or
+                                                                     failed -- never a fourth answer. 'when' parsed and
+                                                                     refused before the session is read
+ ----- review step returns the agenda                  [DONE]        service/steps.py _wants_agenda: {'spec_review': true}
+                                                                     or the desktop's {'summary': 'structured'}; a failure
+                                                                     is a null block plus the warning saying why
+ ----- Structured/Prose toggle + Send panel            [DONE]        RunOptions.tsx, DeliverPanel.tsx; the agenda and its
+                                                                     minutes are shown before anything is sent, and the app
+                                                                     never assembles one of its own
+ ----- Kernel and sourcing evidence in a real run      [OPEN]        evidence_block reads clauses and sourcing, but only
+                                                                     findings and unrouted nets are wired in by
+                                                                     service/steps.py today
+ ----- Run the Calendar path against live Google       [OPEN]        the googleapps standing rule: built offline against the
+                                                                     documented REST surface
+ ----- Google request shapes checked vs discovery      [DONE]        2026-09-08: Gmail v1 and Calendar v3 discovery
+                                                                     documents, Google Chat's formatting reference and
+                                                                     google-auth-oauthlib's own installed-app flow, cited
+                                                                     at each constant. Calendar's conferenceDataVersion=1
+                                                                     and sendUpdates=all were both right. Three errors
+                                                                     found, all silent: gmail.py counted ONE base64 pass
+                                                                     when there are two (a 15 MB attachment is ~27 MB of
+                                                                     request, not 20, and SEND_URL is the "metadata" URI
+                                                                     with no published body limit -- now guarded on the
+                                                                     encoded body and named); a createRequest answering
+                                                                     'pending' or 'failure' was read as an empty meet_uri
+                                                                     with no way to tell the two apart, on an event whose
+                                                                     attendees had already been mailed; and
+                                                                     specreview.event_body defaulted requestId to "",
+                                                                     which Calendar documents as "the same as the
+                                                                     previous request" and therefore ignores.
+ ----- Gmail media upload URI is not implemented       [OPEN]        anything over gmail.MAX_REQUEST_BYTES is refused
+                                                                     locally, naming UPLOAD_URL. Implementing it is a
+                                                                     second, differently-shaped request (message/rfc822
+                                                                     to /upload/...?uploadType=media) this package has
+                                                                     never run against Google; an unverified fallback is
+                                                                     how a silent degrade gets built. A .kicad_pcb is
+                                                                     kilobytes, so nothing real is blocked today.
+ ----- service/deliver.py drops ScheduledEvent.meet_note [OPEN]      NOT IN THE googleapps LANE. deliver.py's two
+                                                                     spec_review/schedule blocks return meet_uri and
+                                                                     nothing else, so a 'pending' or 'failure'
+                                                                     conference still reaches the desktop as an empty
+                                                                     string. googleapps/__main__.py prints the note.
+ 26  Setup Assistant, appearance, notifications, tour [PARTIAL]     first launch gates the strip behind a macOS-style
+                                                                     wizard; docs/setup.md. Built 2026-09-06 by three
+                                                                     lanes plus a review pass; uncommitted.
+ ----- GET /setup + per-provider connect routes        [DONE]        service/setup.py; demo mode is KALEO_SETUP_MODE=demo
+                                                                     on the service, never a client flag; every body
+                                                                     stamped mode+demo; demo state under ~/.kaleo/demo/
+ ----- ~/.kaleo/*.env persistence, applied at start    [DONE]        service/envfiles.py; 0600 at creation, setdefault
+                                                                     into the environment; fixes load_saved_env never
+                                                                     being called (billing_routes.py)
+ ----- Microsoft credential verification               [DONE]        teamsbot/graph.py verify_credentials: one token
+                                                                     request, fixed-vocabulary verdict, "Token issued"
+                                                                     never "Verified"; still unverified live
+ ----- Google non-blocking sign-in status + sign-out   [DONE]        deliver.py AuthJob kept after completion; sign-out
+                                                                     deletes the token here and says it is not revoked
+ ----- React wizard (6 steps) + Settings sections      [DONE]        app/src/pages/welcome, components/setup; Appearance
+                                                                     card picker replaces the theme dropdown
+ ----- Settings store + notify modules (TS)            [DONE]        app/src/lib/settings, app/src/lib/notify; only the
+                                                                     strip webview fires banners; default off
+ ----- Rust shell: gate, store, notification plugin    [DONE]        applied 2026-09-06 (23 GB free). setup.rs is the
+                                                                     first-launch gate; store + notification plugins are
+                                                                     registered BEFORE .setup so Rust reads settings.json
+                                                                     before any webview boots. Capabilities grant only the
+                                                                     six commands used, never a :default set, pinned by
+                                                                     hardening.test.ts. Cargo pins are EXACT, not caret:
+                                                                     tauri-runtime 2.11 added eval_script_with_callback to
+                                                                     a trait tauri-runtime-wry 2.10.1 implements the 2.10
+                                                                     version of, so a caret range lets the trait drift
+                                                                     ahead of its implementation and the build breaks --
+                                                                     tauri-runtime is pinned to 2.10.1 in Cargo.lock.
+                                                                     cargo check clean, 25 Rust tests, 1299 frontend.
+                                                                     STILL OPEN: first-run behaviour has never been LOOKED
+                                                                     AT -- no `tauri dev`, no screenshots. The gate is
+                                                                     compiled and tested, not observed.
+ ----- Screenshot verification of every wizard state   [PARTIAL]     2026-09-07: `tauri dev` run and LOOKED AT for the
+                                                                     first time. Verified on screen: the Rust gate
+                                                                     fires (boot-probe gating=true, /welcome, strip
+                                                                     hidden, Dock icon present) and the hello and
+                                                                     permissions steps render correctly. The other
+                                                                     four are still unlooked-at. Two things make this
+                                                                     hard to redo, both learned the expensive way.
+                                                                     (1) Emptying settings.json does NOT reset the
+                                                                     wizard: getSetting reads the localStorage mirror
+                                                                     first (store.ts:364), so the SPA still saw
+                                                                     completed=true and redirected /welcome ->
+                                                                     /workbench while Rust was still gating. Clear
+                                                                     kaleo.settings.setup.* in the webview store too
+                                                                     (~/Library/WebKit/kaleo/WebsiteData/.../
+                                                                     LocalStorage/localstorage.sqlite3).
+                                                                     (2) A machine that has ever run Kaleo has
+                                                                     silkscreen_* keys, and store.ts:313 reads those
+                                                                     as an existing user and auto-finishes setup, so
+                                                                     the wizard cannot be seen at all until they are
+                                                                     cleared as well. Back the file up: those keys are
+                                                                     the last run, the skin and the tour flag.
+                                                                     Screenshots must be taken with the window ON
+                                                                     SCREEN (screencapture -l <CGWindowID>); an
+                                                                     off-screen WKWebView is rAF-throttled and its
+                                                                     cached surface shows the step frozen at opacity
+                                                                     0, i.e. a correct step photographs blank.
+ ----- Delegated "Sign in with Microsoft"              [OPEN]        Teams bot is app-only; needs an Entra public client,
+                                                                     PKCE like googleapps/auth.py, token file + refresh
+ ----- Live coach marks inside the strip               [OPEN]        58 px non-activating panel; per-skin stop lists;
+                                                                     one caption under the strip ships instead
+ ----- Notification click-back, "Ada" branding in dev  [OPEN]        the plugin discards the handle on macOS; dev builds
+                                                                     say "Terminal"; delivery unverified on this macOS
+ ----- Menu-bar (tray) item                            [OPEN]        tray-icon feature, template icon asset, engine state
+                                                                     push; a way back for Accessory-mode users
+ ----- Strip position under the menu bar               [OPEN]        window.rs uses primary_monitor().size(); use
+                                                                     work_area(); overlay-dock.test.ts pins the pair
+ ----- cargo check CI step for app/src-tauri           [OPEN]        CI builds desktop/src-tauri only
+ ----- Stripe Checkout / balance in the wizard         [OPEN]        MemoryLedger is process-local; webhook must be
+                                                                     reachable
+ ----- Profiles / multi-account, Cloud Run posture,    [OPEN]        singletons today; ~/.kaleo is meaningless on Cloud
+       Windows 0600, launcher --demo flag                            Run; NTFS ignores the mode
+ 27 Placement latency: measured, and what we decided   [DECIDED]     measured 2026-09-07 after "generation of schem is
+                                                                     slow". The schematic was not the slow part.
+ ----- Schematic emission is not the bottleneck        [DONE]        build+emit+write is 2-6 ms on a 6..42-part board and
+                                                                     35 ms at 202 symbols -- 0.03% of a run. The wait is
+                                                                     the CP-SAT budget (packing.py:676), which is spent in
+                                                                     full on every board: 2 parts prove OPTIMAL in 0.01 s,
+                                                                     6 parts never do inside 20 s. Do not go looking in
+                                                                     schematic.py again without re-measuring.
+ ----- Fixed wall-clock solver budget stays            [DECIDED]     Both early-stop families were built and measured, and
+                                                                     both were rejected. Keep the fixed budget.
+                                                                     (1) Wall-clock stagnation (stop after N s with no
+                                                                     improvement): NOT reproducible. Identical input, three
+                                                                     runs, N=4 gave 51.5 / 43.0 / 43.0 mm HPWL and two
+                                                                     different board sizes. The objective SEQUENCE is
+                                                                     bit-identical run to run at workers=1; the wall clock
+                                                                     at which each incumbent lands is not (the same
+                                                                     incumbent arrived at 0.33 / 0.80 / 0.37 s), so a clock
+                                                                     rule cuts the same solve in different places.
+                                                                     (2) Incumbent-index rules (K improvements, relative
+                                                                     epsilon, and a cumulative-window variant): 119
+                                                                     configurations evaluated by replay against the
+                                                                     recorded sequences. Every one either never fires
+                                                                     (saves nothing, i.e. it IS the fixed budget) or costs
+                                                                     >=12.3% on some board. Best worst case: +12.32%.
+                                                                     THE REASON, which is the part worth keeping: the
+                                                                     plateau is not evidence of convergence, it is the
+                                                                     precondition for the breakthrough. The 42-part
+                                                                     sequence runs 0.86%, then 0.03% x34, then 0.24%, then
+                                                                     10.75% -- its single biggest gain is the LAST
+                                                                     incumbent, after 35 flat ones. CP-SAT micro-refines a
+                                                                     layout, then finds a structurally better one. And the
+                                                                     plateaus are locally indistinguishable: 6-part
+                                                                     incumbents 14..52 are the same ~0.03% steps and
+                                                                     accumulate to 0.75% (safe to cut) while the 42-part
+                                                                     ones accumulate to 12.66% (fatal). No function of
+                                                                     incumbent index and objective delta separates them.
+                                                                     Before re-proposing an early stop, produce a rule that
+                                                                     does.
+ ----- CLI prints stage boundaries                     [DONE]        cli.py passed no on_event, so a run was silent for its
+                                                                     whole 20 s and read as a hang -- a real part of what
+                                                                     "slow" meant here. Stage start/done to stderr, so
+                                                                     stdout stays the parseable report. The write is
+                                                                     wrapped in contextlib.suppress(BrokenPipeError,
+                                                                     OSError) and nothing else: a callback that raises
+                                                                     aborts the run by design and that contract is kept for
+                                                                     real errors, but losing a paid run because someone
+                                                                     piped the output through `head` is the worse failure.
+ ----- Parity flake fixed with a deterministic budget  [DONE]        test_enclosure_agent.py's SDK/ADK parity test compared
+                                                                     two INDEPENDENT wall-clock-bounded solves, so it was
+                                                                     asserting a property the solver does not have: it went
+                                                                     pass/fail/pass on identical code (55.35 vs 56.20 mm,
+                                                                     two adjacent incumbents of one solve, not a driver
+                                                                     divergence). Field exclusion is no fix -- the test
+                                                                     also compares enclosure.scad bytes, which are
+                                                                     downstream of the placement. Reaching OPTIMAL is no
+                                                                     fix either: measured, this board needs 128.7 s.
+                                                                     Fixed with solver.parameters.max_deterministic_time
+                                                                     = 1.0 (CP-SAT work units, not seconds), scoped to the
+                                                                     test via the reproducible_placement fixture. Gives
+                                                                     bit-identical placement across three runs at every
+                                                                     budget from 0.25 to 80.0, reaches the proven optimum,
+                                                                     and is FASTER than what it replaced: the test went
+                                                                     ~34 s to 8-10 s and passed three consecutive runs
+                                                                     under four-way CPU contention.
+ ----- Sibling parity tests share the latent problem   [OPEN]        Not fixed: only the enclosure one actually flakes, and
+                                                                     a test that has never gone red is not worth churning.
+                                                                     Same shape, same exposure -- test_adk.py:359
+                                                                     (size_mm, part-by-part placement, wirelength_nm at
+                                                                     time_limit_s=15.0), :392 (size_mm, positions, event
+                                                                     frames at 10.0) and :611 (bom.csv bytes, derived from
+                                                                     the placed board). If any of them starts flaking, the
+                                                                     reproducible_placement fixture is the fix.
+                                                                     test_adk.py:364 also states the opposite of what was
+                                                                     measured -- "single-threaded ... reproducible to the
+                                                                     nanometre" is true of the sequence, not of where a
+                                                                     clock cuts it. Worth correcting when one is touched.
+ ----- Deterministic budget in production placement    [IDEA]        max_deterministic_time would make every run
+                                                                     reproducible, not just the tests, which is worth real
+                                                                     money on a bug report nobody can reproduce. Not
+                                                                     proposed yet, because it trades away the wall-clock
+                                                                     guarantee: Cloud Run has a request deadline and a
+                                                                     deterministic budget does not know about it. Would
+                                                                     need a measured work-units-per-second figure per
+                                                                     machine class and a wall-clock backstop, and the
+                                                                     backstop firing would put the nondeterminism straight
+                                                                     back. Decide deliberately or not at all.
+ ----- Duplicate schematic warnings on re-place        [OPEN]        service/steps.py:630 -- _place calls _write_schematic,
+                                                                     which does board.warnings.extend(sheet.warnings).
+                                                                     Pressing place twice on one session appends the same
+                                                                     warnings again.
+ ----- nets_of is O(parts x endpoints)                 [OPEN]        netlist.py:377 rescans every endpoint of every net
+                                                                     once per part, called once per symbol from
+                                                                     build_schematic; netlist.py:337's passive-leg check
+                                                                     has the same shape. 0.070 s of a 0.449 s profile at
+                                                                     202 symbols, i.e. ~14 ms -- real, and not worth fixing
+                                                                     at today's board sizes. Numbers here so the next
+                                                                     person does not re-measure it.
+
+ 28 The enclosure gate does not gate                   [OPEN]        measured 2026-09-07 while answering "is FreeCAD
+                                                                     better than OpenSCAD". It is not (see below), but
+                                                                     the audit found worse: verify_model().passed is
+                                                                     False on all three demo boards. No generated case
+                                                                     passes its own acceptance gate.
+ ----- min_wall fails iff a label is set               [OPEN]        v2 debosses the label 0.6 mm into a 2.0 mm lid
+                                                                     (cad.py:105 -- that face is the print bed, so an
+                                                                     emboss cannot print honestly), leaving 1.400 mm
+                                                                     against 1.950 required. The clause is correct;
+                                                                     nothing told it a decorative pocket is not a
+                                                                     wall. Isolated by toggling the label alone.
+ ----- overhang fails iff corner_radius > 0            [OPEN]        a tessellation artefact, not a real overhang.
+                                                                     Square corners: the elephant-foot chamfer is
+                                                                     planar and reads exactly 45.0 deg, margin 0.0000
+                                                                     -- sitting ON OVERHANG_LIMIT_DEG with zero
+                                                                     headroom. Rounded: the same chamfer is a cone,
+                                                                     tessellated at _TESS_TOL_MM 0.2, and facets read
+                                                                     47.9 deg against _ANGLE_TOL_DEG 0.5.
+                                                                     Consequence: rigorous mode requires the clauses
+                                                                     to pass, so on the default style it spends its
+                                                                     whole repair budget on two problems no spec edit
+                                                                     can fix.
+ ----- Four clauses are vacuous on generated boards    [OPEN]        underside ("vs tallest bottom-side part 0.000"),
+                                                                     standoff_concentric ("nothing to check" -- no
+                                                                     MountingHole footprint exists, so
+                                                                     envelope.mounting_holes is always empty and
+                                                                     ir.py:146 defaults mount to "corners"), bbox
+                                                                     (self-consistency against a number the emitter
+                                                                     computed, off by 0.0000 every time), lid_mates
+                                                                     (+0.2000 on every board -- it restates
+                                                                     lip_slack).
+ ----- cutout_admits_plug does not check the face      [OPEN]        the acceptance gate is not the safety net it
+                                                                     reads as. v2 DOES reject a wrong-wall cutout --
+                                                                     but at BUILD time, in cad.py:_near_faces, which
+                                                                     raises CutoutError. The clause itself passes the
+                                                                     same case: with the build gate bypassed,
+                                                                     cutout_admits_plug reported "+0.5000 admitted"
+                                                                     for a plug entering a wall 37 mm from the
+                                                                     connector, because _plug_prisms runs the prism
+                                                                     from the wall to the BOARD EDGE, centred on the
+                                                                     part's own y, and never travels to the part. Fix
+                                                                     is ~10 lines: run the prism to the receptacle.
+                                                                     Until then _near_faces is load-bearing and must
+                                                                     not be weakened.
+ ----- v1 cutout check now raises instead of warning   [DONE]        2026-09-07. verify.py:_check_cutouts computed the
+                                                                     identical distance cad.py:_near_faces computes
+                                                                     and called it a warning. Warnings do not gate, so
+                                                                     a cutout declared 'left' for a barrel jack on the
+                                                                     RIGHT wall emitted a 17.6 x 15.6 mm full-height
+                                                                     slot opening onto empty cavity with the connector
+                                                                     sealed behind solid plastic -- while verify_fit
+                                                                     returned +1.0/+1.0/+1.0. The Dockerfile ships
+                                                                     without the cad extra BY DESIGN, so v1 is what
+                                                                     production emits; this was a production defect.
+                                                                     The two paths now agree.
+ ----- v1 verify_fit is still tautological  [RESOLVED BY REMOVAL 2026-09-08]
+                                                                     verify.py is deleted; the kernel's
+                                                                     signed-margin clauses are the only receipt.
+                                                                     Kept here because the measurement is why the
+                                                                     removal was right: every margin equals spec.clearance exactly, on
+                                                                     every board, at every clearance: x/y is clearance
+                                                                     minus overhang and Edge.Cuts is drawn around all
+                                                                     parts so overhang is always 0; z is cavity_z
+                                                                     minus max_height and cavity_z is built FROM
+                                                                     max_height, so clearance cancels. Tripling a
+                                                                     connector's height does not move it. It goes
+                                                                     negative only for a part overhanging Edge.Cuts or
+                                                                     a bottom-side part taller than the standoff gap,
+                                                                     neither of which the pipeline produces.
+ ----- v1 and v2 build different physical objects  [RESOLVED BY REMOVAL 2026-09-08]
+                                                                     v1 is deleted; only v2's object is built.
+                                                                     Kept here because this is the measurement the
+                                                                     removal decision rests on: same spec, same board: v2 is 1.20 mm wider and
+                                                                     deeper on every board and 2.5 mm taller on two,
+                                                                     because v2 widens clearance 1.00 -> 1.60 mm so
+                                                                     its 1.2 mm ring lip clears the board edge and
+                                                                     says so in a warning. v1 has no counterpart and
+                                                                     its "lip" is a solid slab plugging the cavity
+                                                                     mouth. Only v2's case is right, and v1 ships.
+ ----- Board retention: detected, not gated            [OPEN]        v2 emits "board is not retained: no standoff is
+                                                                     free of parts for a lid press boss" on all three
+                                                                     boards. It has the mechanism and detects when it
+                                                                     cannot use it -- as a warning, not a clause. v1
+                                                                     standoffs are solid cylinders: no bore, no screw,
+                                                                     no clip, and the lid does not press the board.
+ ----- FreeCAD: rejected, stay on build123d            [DECIDED]     FreeCAD needs occt>=7.9.3; cadquery-ocp-novtk IS
+                                                                     OCCT 7.9.3 -- the same kernel, same booleans,
+                                                                     same STEP writer. cad.py uses no sketch,
+                                                                     constraint or feature tree and kernel.py already
+                                                                     reaches raw OCP. Cost: no PyPI package,
+                                                                     conda-forge only and ABI-pinned to its own
+                                                                     Python, 344 MB of direct deps (vtk, qt6, pcl,
+                                                                     pyside6), plus an LGPL-2.1 relink duty in a
+                                                                     distributed app. Its FEM is a Calculix wrapper
+                                                                     and would not give us pull-out or snap retention
+                                                                     either. Every failure above is a rule question, a
+                                                                     tessellation tolerance, a Python if-statement or
+                                                                     arithmetic. None is a kernel capability gap.
+ ----- Keep the OpenSCAD v1 path      [REVERSED 2026-09-08]           reversed: a fallback that silently ships a
+                                                                     measurably wrong box behind a receipt that
+                                                                     cannot fail is worse than no case. emit.py,
+                                                                     verify.py and render.py are deleted, the
+                                                                     Dockerfile now installs the cad extra, /generate
+                                                                     carries STEP text instead of .scad, and where
+                                                                     the kernel is absent the case step REFUSES in
+                                                                     words naming `pip install -e ".[cad]"`. The two
+                                                                     objections above were answered rather than
+                                                                     ignored: the one-shot route exports STEP into a
+                                                                     TemporaryDirectory and reads it back, and the
+                                                                     frozen contract field became `step` rather than
+                                                                     being emptied. Recorded in docs/ai-cad-plan.md
+                                                                     as decision v3.
+ ----- USB-C connector pad count costs a repair round  [OPEN]        board.py:392 deliberately omits connector pad
+                                                                     counts. Every other connector name encodes its
+                                                                     count (PinHeader_1x02_...); USB_C_Receptacle_
+                                                                     Power does not, so the model declares 11 pins
+                                                                     against 6 and pays a full extra model call.
+                                                                     Reversing a documented decision in another
+                                                                     module -- deliberate, not a drive-by.
+
+ 29 Switches and test points                          [PARTIAL]     2026-09-08. The connector set (feature rows
+                                                                     above) closed power entry and signal break-out;
+                                                                     these two close the rest of what a demo prompt
+                                                                     was banned from asking for. Both land patterns
+                                                                     are copied pad-for-pad from KiCad's own library
+                                                                     files and the gated comparison test in
+                                                                     test_footprints.py reads those files back.
+ ----- SW_SPST_TL3305A tactile switch                  [DONE]        Button_Switch_SMD.pretty/SW_SPST_TL3305A. Four
+                                                                     pads, two poles (two pads per number, the
+                                                                     CR2032-clip rule), body-anchored in the library
+                                                                     so the 3D model needs no offset -- the only
+                                                                     connector-family part besides the USB-C
+                                                                     receptacle that clears both bars in models3d.
+ ----- TestPoint_Pad_1.5x1.5mm                         [DONE]        TestPoint.pretty/TestPoint_Pad_1.5x1.5mm. One
+                                                                     SMD pad, no orientation, and deliberately no 3D
+                                                                     model: KiCad's own footprint names none and its
+                                                                     library ships none, because a bare pad has no
+                                                                     body. Not a Keystone post.
+ ----- IR kinds 'switch' and 'testpoint'               [DONE]        netlist.KINDS/REF_PREFIX gained SW and TP. Not
+                                                                     sub-cases of 'connector': sourcing.bom_rows
+                                                                     reads the ref prefix, and a button called J3 is
+                                                                     a button nobody can find on the board.
+ ----- Symbols from KiCad's own library                [DONE]        Switch:SW_Push and Connector:TestPoint, copied
+                                                                     the way the connector and battery glyphs were.
+                                                                     A switch that is not two-terminal, or a test
+                                                                     point that is not one-terminal, falls through to
+                                                                     the connector glyph rather than being forced
+                                                                     into a shape that misdescribes it.
+ ----- heights.py understates the TL3305A by 0.3 mm    [DONE]        Fixed in the 2026-09-08 integration pass.
+                                                                     enclosure/heights.py's "SW_SPST" key now says
+                                                                     3.8 mm, the Z extent of KiCad's own
+                                                                     SW_SPST_TL3305A.step (A 3.8, B 5.0, C 7.0),
+                                                                     pinned by test_models3d.py. NOT the fix this
+                                                                     row proposed: adding a "TL3305" key would have
+                                                                     been a silent no-op, because height_for takes
+                                                                     the LONGEST matching key and "SW_SPST" (7) beats
+                                                                     "TL3305" (6). Any B/C row would need a key
+                                                                     longer than "SW_SPST".
+ ----- Verified against real KiCad                     [DONE]        2026-09-08, kicad-cli 10.0.6, on a board
+                                                                     carrying the barrel jack, screw terminal, 1x04
+                                                                     header, JST PH, USB-C receptacle, tactile
+                                                                     switch and test pad at once: ERC 0 errors
+                                                                     (53 warnings, all lib_symbol_issues /
+                                                                     footprint_link_issues), DRC --severity-error
+                                                                     0 violations and 0 unconnected, parity 0
+                                                                     issues, and `pcb render --side top` shows every
+                                                                     model on its own pads. This is the first time
+                                                                     the connector set went through KiCad at all --
+                                                                     the recorded clean state in CLAUDE.md was
+                                                                     measured on the LDO and blinker demos, neither
+                                                                     of which has a connector on it.
+ ----- Not yet drawn, and refused rather than guessed  [OPEN]        pin sockets, IDC/ribbon, generic dual-row 2.54
+                                                                     headers, slide and DIP switches, encoders,
+                                                                     relays, USB-A/micro/mini, RJ45, SD, Keystone
+                                                                     test posts, and any USB-C with data pins. Each
+                                                                     is a refusal naming the supported list, never a
+                                                                     substitution.
+ ----- sourcing._PREFIX_KINDS had no SW or TP          [DONE]        Fixed in the 2026-09-08 integration pass.
+                                                                     netlist.KINDS' own comment gives sourcing.
+                                                                     bom_rows ("which reads the ref prefix") as the
+                                                                     reason switch/testpoint are not sub-cases of
+                                                                     connector -- and that table never gained the
+                                                                     rows, so both landed on "device", the word a
+                                                                     microcontroller gets. A test point stays ON the
+                                                                     BOM rather than being dropped: KiCad marks its
+                                                                     own TestPoint_Pad footprint exclude_from_bom,
+                                                                     which is right about purchasing and wrong about
+                                                                     this file, since bom_rows is also the order
+                                                                     step's manifest of what is on the board and a
+                                                                     part that vanishes from it is the silent drop
+                                                                     this package refuses everywhere else.
+ ----- The model is never told about the new kinds     [OPEN]        agents/plan.py builds its vocabulary from
+                                                                     CONNECTOR_PACKAGES and BATTERY_PACKAGES only,
+                                                                     so SWITCH_PACKAGES and TESTPOINT_PACKAGES reach
+                                                                     the model through board.supported_packages_text
+                                                                     but not through plan.py's own tuple fields. A
+                                                                     prompt asking for a button therefore depends on
+                                                                     the package text alone.
+                                                                     Looked at on 2026-09-08 and deliberately NOT
+                                                                     fixed the obvious way: PackageVocabulary's two
+                                                                     fields are not "parts we can draw", they are
+                                                                     the POWER ENTRY vocabulary (PowerEntry.
+                                                                     connector_package / battery_package) and the
+                                                                     Connectivity one, whose docstring is "something
+                                                                     external that plugs into the board". A tactile
+                                                                     switch and a bare copper pad plug into nothing,
+                                                                     so dropping them into vocab.connectors would
+                                                                     let a plan answer connectivity: [{package:
+                                                                     "SW_SPST_TL3305A"}] and validate. If the plan
+                                                                     should decide "this board has a power switch"
+                                                                     it needs its own field, not a widened list.
+
+ 30 Cross-lane integration pass (2026-09-08)          [PARTIAL]     six lanes landed green in isolation in one working
+                                                                     tree; every defect below was in the joins.
+ ----- Effort level reaches no front end               [OPEN]        agents/effort.py made 'fast' the global default,
+                                                                     which drops max_repairs 3 -> 1 and puts the case,
+                                                                     BOM and SPICE lanes on the cheap model tier for
+                                                                     EVERY caller. Neither front end sends 'effort':
+                                                                     IntentForm.svelte hard-codes time_limit_s (and
+                                                                     defaults no_solver_budget ON, so the SPA runs an
+                                                                     UNLIMITED solve while the receipt says level
+                                                                     'fast'), and app/src/hooks/useSilkscreenRun.ts
+                                                                     sends DEFAULT_TIME_LIMIT_S = 20. Neither renders
+                                                                     result.effort, so nobody is told. The service and
+                                                                     the CLI both accept 'effort' already, so the fix
+                                                                     is UI on two clients, not plumbing.
+                                                                     The bot fleet split too, and neither half knows:
+                                                                     slackbot and googleapps still pass an explicit
+                                                                     max_repairs=3 / time_limit_s=20.0, so they run
+                                                                     balanced's budgets while reporting level 'fast'
+                                                                     with both knobs in overrides; meetings, zoombot
+                                                                     and teamsbot pass generate_kwargs={} and so
+                                                                     really did drop to one repair round.
+ ----- Two effort vocabularies                         [OPEN]        frontend/src/lib/effort.js is an UNUSED module
+                                                                     (nothing imports it; IntentForm has a raw number
+                                                                     input) whose stops are low/medium/high at
+                                                                     5/20/120 s. The engine's are fast/balanced/
+                                                                     thorough at 5/20/45 s. Wire the SPA to the
+                                                                     engine's vocabulary or delete the dead module;
+                                                                     do not leave two dials named differently.
+ ----- refute wired to the effort slider               [DONE]        docs/critic-split.md said the refutation round
+                                                                     was left unreachable because "the engine critic
+                                                                     has no effort slider to hang the cost on", and
+                                                                     agents/effort.py landed in the same tree.
+                                                                     run_review(refute=True) is now
+                                                                     EffortProfile.refute: on at 'thorough', off
+                                                                     below, on EffortReceipt because it is the one
+                                                                     axis that makes a HIGHER level report FEWER
+                                                                     findings. Revert = one field.
+ ----- ReviewReport.as_dict carries dropped/merged     [DONE]        the critic lane left both off the wire because
+                                                                     three service tests assert that dict by exact
+                                                                     equality and that was another lane's file. Dict
+                                                                     and the three assertions widened together.
+ ----- models3d._FRAME_MISMATCH was a stale reason     [DONE]        it said "the emitter writes a zero model offset",
+                                                                     which stopped being true when Model3D.offset_mm
+                                                                     landed; and why_unmatched's single-header and
+                                                                     JST branches still answered it for sizes that
+                                                                     are simply not drawn here. Both rewritten.
+ ----- TerminalBlock and AAA offsets unverified        [OPEN]        those two are the last _FRAME_MISMATCH users.
+                                                                     The translation is expressible now; what is
+                                                                     missing is the SIGN, which no test in this repo
+                                                                     can decide -- (offset (xyz)) is Y-up and the
+                                                                     footprint file is Y-down, the candidates differ
+                                                                     by twice the offset, and the header's sign was
+                                                                     settled by rendering both. Render both for these
+                                                                     two and they become mappings.
+ ----- propose.py's part-number rule broke the shared  [OPEN]        landed ~10:00 on 2026-09-08, while this pass was
+       service fixture, and nobody updated it                        running. agents/propose.py gained
+                                                                     part_number_errors(), which rejects an IC whose
+                                                                     devices key is a reference designator -- and
+                                                                     service/tests/test_app.py::CIRCUIT still keys its
+                                                                     one device "U1". Every service test that drives
+                                                                     the pipeline through that fixture now 500s at
+                                                                     POST /steps or /generate ("No valid circuit
+                                                                     after 2 attempts"): 11 of 16 in
+                                                                     test_generate_summary.py alone, plus
+                                                                     test_background_outcome and test_steps.
+                                                                     The fix is mechanical and the same file already
+                                                                     shows it: NAMED_CIRCUIT keys "AMS1117-3.3" with
+                                                                     endpoints "AMS1117-3.3.3". Note U1 stays correct
+                                                                     wherever it is a *reference designator* --
+                                                                     assign_refs still hands the device U1 -- so only
+                                                                     the devices key, the nets endpoints and the
+                                                                     REVIEW fixture's spec-name "parts" move.
+                                                                     NOT done here: propose.py was being edited by a
+                                                                     live agent as this was written (mtime 10:00:17),
+                                                                     and rewriting their fixture under them is how
+                                                                     two agents lose each other's work.
+ ----- Lint on files two agents share                  [OPEN]        during this pass zoombot/rtms.py, zoombot/tests/
+                                                                     test_zoom_rtms.py and teamsbot/tests/
+                                                                     test_teams_http.py picked up ruff errors from a
+                                                                     concurrently-running agent and some cleared
+                                                                     again minutes later. Re-run the CI lint line
+                                                                     once the tree is quiet.
+
+ 31 Does propose design correct circuits?             [MEASURED]    2026-09-08. The first measurement anybody has taken
+                                                                     of whether the pipeline produces circuits that
+                                                                     WORK, as opposed to circuits that parse. Harness:
+                                                                     scripts/design_quality.py (real model calls, needs
+                                                                     a key, never collected by pytest -- the
+                                                                     simulate_demo.py convention), oracle:
+                                                                     spice/registry.py. Full write-up and every failure
+                                                                     in docs/design-quality.md. Re-run it after any
+                                                                     change to propose.py or plan.py.
+ ----- The measurement itself                          [DONE]        nine prompts (the six demo prompts plus three
+                                                                     written in the same spirit), two trials each, on
+                                                                     gemini-3.5-flash-lite because the day's free-tier
+                                                                     quota for gemini-3.7-flash (limit 20/day) ran out
+                                                                     twelve trials in. Clauses restate the ENGLISH
+                                                                     REQUEST ("the rail is 3.3 V under 10 mA"), never
+                                                                     the circuit's own component values, or the oracle
+                                                                     would agree with its subject. Probe points come
+                                                                     from the registry's pin binding, so a board that
+                                                                     calls its rail VOUT_3V3 is scored on its
+                                                                     electrons, not its vocabulary.
+ ----- An IC named "U1": the measured defect           [FIXED]       16 of 18 proposals keyed their IC by reference
+                                                                     designator, not part number, even when the request
+                                                                     said "an AMS1117-3.3 in SOT-223". The IR accepts
+                                                                     it (a device key need only be a unique
+                                                                     identifier), and five consumers then silently get
+                                                                     nothing: sourcing's MPN and the distributor
+                                                                     lookup, models3d, spice/registry, the schematic
+                                                                     symbol, and the critic's datasheet check. Fixed
+                                                                     by propose.part_number_errors, batched into the
+                                                                     same repair list as board.package_errors, plus
+                                                                     rule 11 in PROPOSE_PROMPT. Measured before/after
+                                                                     on the identical harness: named the part 2/18 ->
+                                                                     18/18; reached a simulated verdict 0/18 -> 6/18;
+                                                                     of those six, five met their specification.
+ ----- Only 6 of 18 can be scored at all               [OPEN]        the denominator is capped by the instrument, not
+                                                                     by propose. Four one-line gaps in files this lane
+                                                                     does not own would raise it to about 12/18:
+                                                                     spice/registry.py has no port model for a
+                                                                     'testpoint' or a 'switch' (_builtin ports only
+                                                                     connector/battery, though a test point IS an open
+                                                                     terminal); its 555 alias table does not read
+                                                                     'THRESH' as THRES; _SUPPLY_POSITIVE does not read
+                                                                     'VCC+' as the positive supply; and spice/deck.py
+                                                                     refuses a 0-ohm link as a zero-valued resistor.
+                                                                     Each cost a real proposal its verdict.
+ ----- spice/library.py's 555 latch drifts             [OPEN]        timer555_subckt holds state as the literal
+                                                                     expression V(Q) through a 1 ns RC -- a pure
+                                                                     integrator of numerical error with no restoring
+                                                                     nonlinearity -- so a long hold drifts. Measured on
+                                                                     ngspice 47: exact at 480.8 Hz and 4.808 Hz, and at
+                                                                     1 Hz a 1.024 Hz network measures 1.904 Hz with the
+                                                                     timing node topping out at 5.08 V of a 6.00 V
+                                                                     threshold. Same failure for 470k/1uF and
+                                                                     10k/47uF, so it is the hold DURATION, not the
+                                                                     impedance; Gear integration makes it worse.
+                                                                     Suggested one-line fix: make the hold branch
+                                                                     regenerative, (V(Q) > 0.5) ? 1 : 0. Until then the
+                                                                     harness's calibrate_astable refuses a verdict at
+                                                                     1 Hz and says why, so the headline 1 Hz blinker
+                                                                     demo is currently UNMEASURABLE.
+ ----- .op returns a non-solution on the op-amp        [OPEN]        ngspice's DC operating point on a unity-gain
+                                                                     follower built from library.opamp_subckt warns
+                                                                     'gmin stepping failed' / 'source stepping failed'
+                                                                     and then writes a well-formed rawfile holding a
+                                                                     number that contradicts its own inputs (a 2.5 V
+                                                                     follower read 0.053 V). spice.verify() does not
+                                                                     refuse on those warnings. agents/simulate.py is
+                                                                     exposed: 'op' is the obvious analysis for a DC
+                                                                     reference and a model will propose it. The
+                                                                     harness works around it with a settled transient
+                                                                     (settled_dc); the package should decide whether a
+                                                                     non-converged .op may be reported at all.
+ ----- 74-series parts cannot be named in the IR       [OPEN]        netlist.CircuitSpec.validate requires a part name
+                                                                     to be a valid identifier, so 74HC595 -- and every
+                                                                     other 74-series logic part -- is rejected. Pinned
+                                                                     by test_propose_part_numbers.py rather than worked
+                                                                     around: a prompt rule telling the model to write
+                                                                     a part number the IR then refuses is a repair
+                                                                     loop that cannot converge.
+ ----- Rule 10 contradicts the demo prompts            [OPEN]        7 of 18 proposals added a connector or battery to
+                                                                     a request that said "do not add connectors,
+                                                                     headers, switches, buttons, or test points",
+                                                                     because PROPOSE_PROMPT rule 10 says in capitals
+                                                                     that THE BOARD MUST HAVE A POWER INPUT as a real
+                                                                     part, and the prompt wins. The EXAMPLES OF
+                                                                     PROMPTS block above says the ban "is gone" while
+                                                                     the prompts under it still carry it. The harness
+                                                                     reports this and deliberately does NOT score it:
+                                                                     which one wins is a product decision, not a
+                                                                     measurement. Decide it, then make the prompts and
+                                                                     rule 10 agree.
+ ----- One measured design failure                     [OPEN]        blinker10, asked for "roughly 10 Hz", proposed
+                                                                     Ra=1k Rb=68k C=10uF, which is 1.05 Hz -- ten
+                                                                     times slow. The simulation caught it from the
+                                                                     other side: over a window sized for 10 Hz the
+                                                                     output never leaves its high rail, peak-to-peak
+                                                                     0 V against a required 2.5 V. Everything else on
+                                                                     that board is right. One failure of one scored
+                                                                     trial is not a rate; more trials are needed
+                                                                     before designing a fix for it.
+
+OPEN WORK, SUMMARISED
+---------------------
+Everything actionable reduces to: feature 2 in full (parallel reads, now the
+R11 rung under 12), finding-level hallucination filtering under 4, the request
+timeout under 5, feature 6 in full (confirmation gates), the deploy and smoke
+check under 7, the ops polish under 8, Ada voice/desk under 21 (feature 9's
+voice row is no longer done; the SPA's own browser Web Speech dictation and
+read-aloud row under 9 is done and separate from it), the error taxonomy under
+10 (from PR #5 review), and the stream-fallback tightening under 11 (from PR #9
+review), and the three open rows under 18 (Slack: live-workspace test,
+serializer promotion, run persistence). Feature 16 still needs a trusted IC
+model registry and its place in the agent repair loop. The [IDEA] rows under
+4 and 5 are ideas, not commitments. Newly open: a live run of either meeting
+bot and the two audio-out containers under 23 and 24, the wider evidence block
+and the live Calendar path under 25, and richer panel actions under 22.
+
+The ADK lane runs alongside that. Feature 12 is live and the flip is done: the
+default engine has been "adk" since the 2026-08-30 gate run, with
+SILKSCREEN_ENGINE=sdk as the kill switch, and the image, CI and setup all
+install the adk extra. What remains under 12 is the queue behind the flip —
+R9 and R11, then R13 through R16, with R17 and R18 as ideas. Feature 13 is
+complete, D5 included (check_docs --fix ran once the counts settled).
+
+Features 14 and 15 landed with PR #10 and changed what a run produces: a whole
+KiCad project rather than one placed board file. What is left of them is the
+web UI catching up (the SPA shows neither the schematic nor the tracks) and the
+router's remaining honest limit, fine-pitch packages (rip-up-and-retry landed).
+
+Feature 19, the Google Meet front end, is new: the REST client, the config, the
+intent extraction, the runner and its two gates are done and tested offline, but
+nothing calls poll_once on a schedule, the seen-conference set lives in memory,
+and there is no OAuth acquisition or refresh — the host supplies
+MEET_ACCESS_TOKEN. Most importantly it is unverified live: it has never run
+against a real Google Workspace account or the live Meet API, and it can only
+ever see meetings whose organiser enabled transcription, after they end.
+
+Feature 20, sourcing, is built to the honesty line and no further: a part number
+is a proposal until a distributor API exists to check it, and the status
+vocabulary has no word for a verified MPN on purpose. The two open rows are
+that verification and an in-app 3D viewer.
+
+Features 22 to 25 landed together on 2026-09-06. Feature 22, the integrations
+panel, is complete bar richer actions. Features 23 and 24, the Zoom and Teams
+front ends, are built to the same line as feature 19 and no further: the
+receive halves, the gates and the refusals are tested offline against recorded
+transports, and NEITHER HAS EVER RUN AGAINST A LIVE ACCOUNT. Their audio-out
+halves are deliberately unbuilt -- RTMS is receive-only and a Teams calling bot
+needs Microsoft's .NET media stack -- so both bot/ directories are a
+specification plus a container that refuses (Zoom's stub answers
+{"spoken": false}, Teams' answers 501), because a stub that claimed success
+would let a run report that the agent spoke in a meeting the room heard nothing
+in. The RTMS frame constants and the Bot Framework issuer/key constants are
+documented assumptions, gathered in one block each so a first live run can
+correct them in one place. Feature 25, the structured spec review, is done end
+to end except that only findings and unrouted nets reach the evidence block
+today (kernel clauses and sourcing are read but not yet wired in by
+service/steps.py), and the Calendar half carries googleapps' standing
+unverified-against-live-Google caveat.
+
+Worth knowing for anything touching the emitters: KiCad 8.0.9 is installed
+locally and `kicad-cli sch erc` / `pcb drc` are now the strongest check the
+project has. The first DRC ever run on an emitted board found a real short that
+the whole test suite passed over. See "Verifying against real KiCad" in
+CLAUDE.md. It is a local gate, not a CI one.
+
+────────────────────────────────────────────────────────────────────────────
+Feature 26 — Ada as a coworker: local listening, joining calls, guided cursor
+[NOT STARTED — parked 2026-09-06 as not important right now]
+────────────────────────────────────────────────────────────────────────────
+
+Three products sharing one spine (audio/screen in -> model -> the existing
+overlay). Recorded here so the research is not re-done. Full notes in the
+session scratchpad; the load-bearing findings are below.
+
+WHAT ALREADY EXISTS, so none of it gets rebuilt:
+  generate_pcb(model, intent)  engine/silkscreen/agents/pipeline.py:679 — the
+    single convergence point; slackbot, meetings, zoombot, teamsbot and
+    service/app.py all reach it identically.
+  meetings/intent.py::extract_requests — transcript -> BoardRequest with the
+    quote-containment gate.
+  teamsbot/agent.py::Chunk (speaker/text/at_ms) — the structural seam. Satisfy
+    it and windowing, dedupe and the 0.6 confidence floor come free.
+  zoombot/speak.py::Speaker + AUDIBLE_SPEAKERS — say-something-in-a-meeting,
+    with the whitelist that stops a report claiming audio it never emitted.
+
+STAGE 1, local listening. The only hard part is macOS system audio.
+  The deleted app/src-tauri/src/speaker/ module had REAL implementations on
+  Windows (WASAPI loopback) and Linux (Pulse .monitor). macOS was ALWAYS a
+  stub: upstream used a CoreAudio process tap via `cidre`, whose build shells
+  out to xcodebuild and so needs a full ~10 GB Xcode install. Today, on a call,
+  Ada hears only what leaks from the speakers into the microphone.
+  Two verified fixes:
+    - screencapturekit crate 9.0.1 — system audio, macOS 13+, Command Line
+      Tools only. Screen Recording is already granted (desk.rs shells out to
+      `screencapture`). RECOMMENDED: lower OS floor, pure Rust.
+    - CoreAudio process tap, macOS 14.2+, can tap a single pid. A complete
+      working blueprint sits at vendor/openwhispr/resources/macos-audio-tap.swift
+      — CLAUDE.md marks vendor read-only, so read the approach, write our own.
+  Capture TWO TRACKS, not a mixdown: mic = you, system = them. That is the only
+  diarization available, because transcribe_audio returns a flat string with no
+  speaker labels by design.
+  Three things that will bite:
+    - Mic arbitration. wake/mic.rs Mic::open() is single-owner and the wake
+      thread holds it; a 45-minute recording cannot coexist with an armed ear.
+    - Clock drift. Mic and tap are separate clock domains and slide over an
+      hour. resample_linear is a 2-tap interpolator with no anti-aliasing —
+      fine for a wake spotter, not for long-form.
+    - /transcribe is one-shot, <=1 MiB, <=60 s, 15 RPM. A 45-minute meeting is
+      ~675 segments. Needs a purpose:"meeting" lane with its own pacer,
+      following the existing WAKE_REQUEST_PACER precedent.
+
+STAGE 2, joining calls as a teammate. Everything downstream is Stage 1's; only
+  the transcript source and the identity are new (its own Google account,
+  visible in the roster). Verified dead ends:
+    - Meet REST API: post-hoc transcripts only, Workspace only, organiser must
+      have enabled transcription. Not a notetaker. (This is what feature 19 is.)
+    - Meet Media API: real-time and sanctioned, but developer preview, EVERY
+      participant must be enrolled in the preview programme, and restricted
+      scopes need a 4-7 week security assessment. Cannot be tested today.
+
+STAGE 3, guided cursor ("show me where to click"). Verified by string
+  inspection of the installed KiCad 10.0.6:
+    libwx_osx_cocoau-3.2.0.4.1.dylib   NSAccessibility  0
+    _pcbnew.kiface                     NSAccessibility  0
+    libwx_osx_cocoau-3.2.0.4.1.dylib   wxNSMenu 3, setMainMenu 1
+    libwx_osx_cocoau-3.2.0.4.1.dylib   wxAuiToolBar 9
+  So MENUS are precisely addressable through Accessibility (wx hands real
+  NSMenus to [NSApp setMainMenu:], which gets AX for free from AppKit), while
+  TOOLBARS and the GL canvas are owner-drawn and expose nothing. "How do I run
+  DRC?" is answerable exactly (Inspect > Design Rules Checker); pointing at a
+  toolbar button needs vision and is best-effort.
+  The permission for synthetic clicks is PostEvent, NOT Accessibility — they
+  are separate TCC buckets, and Apple DTS documents a case where Accessibility
+  was granted and mouse events still did nothing. Call CGPreflightPostEventAccess
+  / CGRequestPostEventAccess directly (already in Cargo.lock via
+  objc2-core-graphics); tauri-plugin-macos-permissions 2.3.0 does not expose
+  it, and the toggle only takes effect after a relaunch.
+  Three coordinate frames are in play: desk.rs returns physical pixels, NSEvent
+  is bottom-left points, CGEvent wants top-left points. Invisible to today's
+  caption consumer, fatal for a 24 px button.
+  Per-region click-through does not exist in Tauri (#2090 WONTFIX) and while a
+  window ignores the cursor its webview receives no mouse events at all.
+  Safety rule, extending this repo's own "a sentence never spends money":
+  A SENTENCE NEVER TOUCHES THE BOARD. Never press a vision-derived target.
+
+Prior art read: Clicky (farzaa) is an NSPanel menu-bar app; pointing is a
+[POINT:x,y:label:screenN] marker in the model's own output, coordinates from
+vision rather than an accessibility API, and the open-source version does not
+click. Cluely is screen OCR + system audio -> STT -> LLM -> overlay; this repo
+is a fork of Pluely, which is the open-source Cluely, so speaker/ WAS that
+capture layer.
+
+NOT VERIFIED: no live AX dump against a running KiCad (all of the above is
+static inspection); nothing was compiled; PostEvent semantics are documented
+only in Apple forum answers, not the reference docs; whether wx DIALOG controls
+carry usable AXTitles is open, and it decides whether Ada can point inside the
+DRC dialog or only get you to it.

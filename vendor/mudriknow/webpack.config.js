@@ -1,0 +1,174 @@
+const path = require("path");
+const HtmlWebpackPlugin = require("html-webpack-plugin");
+const CopyPlugin = require("copy-webpack-plugin");
+
+module.exports = [
+  {
+    mode: "production",
+    target: "electron-main",
+    devtool: "source-map",
+    entry: "./src/main/index.ts",
+    module: {
+      rules: [{ test: /\.ts$/, use: "ts-loader", exclude: /node_modules/ }],
+    },
+    resolve: {
+      extensions: [".ts", ".js"],
+      alias: { "@shared": path.resolve(__dirname, "src/shared") },
+    },
+    output: { filename: "main.js", path: path.resolve(__dirname, "dist") },
+    externals: {
+      robotjs: "commonjs robotjs",
+      koffi: "commonjs koffi",
+    },
+    plugins: [
+      new CopyPlugin({
+        patterns: [
+          { from: "src/main/guide/guide-overlay.html", to: "guide-overlay.html" },
+          { from: "src/main/calibrate/calibrate.html", to: "calibrate.html" },
+          { from: "src/main/calibrate/hero-preview.html", to: "hero-preview.html" },
+          { from: "src/main/calibrate/owl-preview.js", to: "owl-preview.js" },
+          { from: "src/main/splash/splash.html", to: "splash.html" },
+          { from: "assets/owl-point-right.png", to: "owl-point-right.png" },
+          { from: "assets/owl-point-left.png", to: "owl-point-left.png" },
+          { from: "assets/owl-thinking.png", to: "owl-thinking.png" },
+          { from: "assets/icon.png", to: "icon.png" },
+          { from: "assets/mascot.png", to: "mascot.png" },
+        ],
+      }),
+    ],
+  },
+  {
+    mode: "production",
+    target: "electron-preload",
+    devtool: "source-map",
+    entry: "./src/preload.ts",
+    module: {
+      rules: [{ test: /\.ts$/, use: "ts-loader", exclude: /node_modules/ }],
+    },
+    resolve: {
+      extensions: [".ts", ".js"],
+      alias: { "@shared": path.resolve(__dirname, "src/shared") },
+    },
+    output: {
+      filename: "preload.js",
+      path: path.resolve(__dirname, "dist"),
+    },
+  },
+  {
+    mode: "production",
+    target: "electron-preload",
+    devtool: "source-map",
+    entry: "./src/main/area-preload.ts",
+    module: {
+      rules: [{ test: /\.ts$/, use: "ts-loader", exclude: /node_modules/ }],
+    },
+    resolve: {
+      extensions: [".ts", ".js"],
+    },
+    output: {
+      filename: "area-preload.js",
+      path: path.resolve(__dirname, "dist"),
+    },
+  },
+  {
+    mode: "production",
+    target: "electron-preload",
+    devtool: "source-map",
+    entry: "./src/main/guide/guide-overlay-preload.ts",
+    module: {
+      rules: [{ test: /\.ts$/, use: "ts-loader", exclude: /node_modules/ }],
+    },
+    resolve: { extensions: [".ts", ".js"] },
+    output: {
+      filename: "guide-overlay-preload.js",
+      path: path.resolve(__dirname, "dist"),
+    },
+  },
+  {
+    mode: "production",
+    target: "web",
+    devtool: "source-map",
+    entry: "./src/main/guide/guide-overlay-renderer.ts",
+    module: {
+      rules: [{ test: /\.ts$/, use: "ts-loader", exclude: /node_modules/ }],
+    },
+    resolve: { extensions: [".ts", ".js"] },
+    output: {
+      filename: "guide-overlay-renderer.js",
+      path: path.resolve(__dirname, "dist"),
+    },
+  },
+  {
+    mode: "production",
+    target: "electron-preload",
+    devtool: "source-map",
+    entry: "./src/main/calibrate/calibrate-preload.ts",
+    module: {
+      rules: [{ test: /\.ts$/, use: "ts-loader", exclude: /node_modules/ }],
+    },
+    resolve: { extensions: [".ts", ".js"] },
+    output: {
+      filename: "calibrate-preload.js",
+      path: path.resolve(__dirname, "dist"),
+    },
+  },
+  {
+    mode: "production",
+    target: "web",
+    devtool: "source-map",
+    entry: "./src/main/calibrate/calibrate-renderer.ts",
+    module: {
+      rules: [{ test: /\.ts$/, use: "ts-loader", exclude: /node_modules/ }],
+    },
+    resolve: { extensions: [".ts", ".js"] },
+    output: {
+      filename: "calibrate-renderer.js",
+      path: path.resolve(__dirname, "dist"),
+    },
+  },
+  {
+    mode: "production",
+    target: "web",
+    devtool: "source-map",
+    entry: "./src/main/splash/splash-renderer.ts",
+    module: {
+      rules: [{ test: /\.ts$/, use: "ts-loader", exclude: /node_modules/ }],
+    },
+    resolve: { extensions: [".ts", ".js"] },
+    output: {
+      filename: "splash-renderer.js",
+      path: path.resolve(__dirname, "dist"),
+    },
+  },
+  {
+    mode: "production",
+    target: "electron-renderer",
+    devtool: "source-map",
+    entry: "./src/renderer/index.tsx",
+    module: {
+      rules: [
+        { test: /\.ts$/, use: "ts-loader", exclude: /node_modules/ },
+        { test: /\.tsx$/, use: "ts-loader", exclude: /node_modules/ },
+        { test: /\.css$/, use: ["style-loader", "css-loader"] },
+        { test: /\.(woff2?|eot|ttf|otf)$/, type: "asset/resource", generator: { filename: "fonts/[name][ext]" } },
+      ],
+    },
+    resolve: {
+      extensions: [".ts", ".tsx", ".js"],
+      alias: { "@shared": path.resolve(__dirname, "src/shared") },
+      // Resolve the `default`/`browser` export conditions (not `node`) so
+      // isomorphic deps like `vfile` pick their browser variant. The Node
+      // variant imports `node:path`/`node:process`/`node:url`, which webpack
+      // leaves as a raw `require()` under `electron-renderer`; the renderer
+      // runs with nodeIntegration OFF, so that throws "require is not defined".
+      conditionNames: ["web", "browser", "import", "require", "default"],
+    },
+    output: {
+      filename: "renderer.js",
+      path: path.resolve(__dirname, "dist"),
+    },
+    plugins: [
+      new HtmlWebpackPlugin({ template: "./src/renderer/index.html" }),
+    ],
+  },
+];

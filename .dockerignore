@@ -1,0 +1,77 @@
+# Build context for the root Dockerfile. Only three trees are actually needed:
+# pyproject.toml + README.md + engine/ (the pip install), service/, and frontend/
+# (the node build stage). Everything else is noise that slows the context upload
+# and, worse, can silently end up in the published image.
+
+# --- version control, editors, CI ---
+.git/
+.github/
+.gitignore
+.claude/
+
+# --- Python build and cache artefacts ---
+# NOTE: .dockerignore patterns are root-relative, NOT recursive like .gitignore.
+# A bare `node_modules/` only excludes the one at the top of the context; the
+# `**/` forms below are what actually keep nested trees out.
+.venv/
+venv/
+**/__pycache__/
+**/*.py[cod]
+**/*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# --- Node ---
+# frontend/ itself is the build stage's input; only its generated trees are
+# excluded. `**/` matters here: a stray nested project (an untracked scratch
+# checkout under frontend/, say) otherwise pushes hundreds of MB of
+# node_modules through the build context and into the frontend stage.
+**/node_modules/
+**/.next/
+frontend/dist/
+
+# --- tests: not packaged (packages.find looks under engine/) and not run in the image ---
+engine/tests/
+service/tests/
+googleapps/tests/
+
+# --- vendored reference code: read-only, imported by nothing (see CLAUDE.md) ---
+vendor/
+
+# --- retired pre-rewrite code: not linted, not packaged, not imported ---
+frontend-archive/
+backend/
+mcp/
+pcb/
+packing/
+footprint/
+lib_pickle_dir/
+lcsc.py
+test_skidl.py
+test_skidl_sklib.py
+
+# --- docs, design sources, dev scripts: none of it is served or imported ---
+docs/
+design/
+scripts/
+*.md
+!README.md
+TODO.txt
+LICENSE
+
+# --- generated boards and EDA scratch output ---
+*.kicad_pcb
+*.kicad_sch
+*.kicad_pro
+*.net
+*.erc
+*.log
+*.pkl
+
+# --- secrets: never, under any circumstances, in a published image ---
+.env
+.env.*
+
+# --- OS ---
+.DS_Store

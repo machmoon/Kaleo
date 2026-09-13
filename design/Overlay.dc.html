@@ -1,0 +1,93 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Silkscreen:wght@400;700&display=swap">
+  <style>
+    body { margin:0; font-family:"Geist","Helvetica Neue",Arial,sans-serif; }
+    a { color:#3E6FD9; } a:hover { color:#E8574A; }
+    .px { font-family:"Silkscreen","Geist Mono",monospace; }
+    .mono { font-family:"Geist Mono",ui-monospace,monospace; font-variant-numeric:tabular-nums; }
+  </style>
+</helmet>
+
+<!-- shown floating over the dark board canvas, to prove legibility on both grounds -->
+<div style="width:520px; height:660px; background:#001023; display:flex; align-items:center; justify-content:center; padding:34px; box-sizing:border-box; position:relative; overflow:hidden;">
+
+  <svg width="100%" height="100%" viewBox="0 0 520 660" style="position:absolute; inset:0;">
+    <defs><pattern id="d2" width="14" height="14" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="#848484" opacity=".2"/></pattern></defs>
+    <rect width="520" height="660" fill="url(#d2)"/>
+    <rect x="60" y="70" width="380" height="300" fill="none" stroke="#D0D2CD" stroke-width="1.5" opacity=".5"/>
+    <rect x="150" y="140" width="80" height="80" fill="#C83434" opacity=".2" stroke="#C83434" stroke-width="1.2"/>
+    <rect x="290" y="190" width="44" height="38" fill="#C83434" opacity=".2" stroke="#C83434" stroke-width="1.2"/>
+  </svg>
+
+  <!-- the assistant window -->
+  <div style="width:394px; background:#FFFFFF; border-radius:14px; border-bottom:2px solid #C9483C; box-shadow:0 14px 40px rgba(0,0,0,.42); position:relative; z-index:5; padding-top:26px;">
+
+    <!-- mascot breaking the top edge -->
+    <div style="position:absolute; top:-22px; left:20px; width:48px; height:48px; border-radius:50%; background:#F5D547; border:2px solid #1F1B14; display:flex; align-items:center; justify-content:center; box-shadow:0 3px 10px rgba(31,27,20,.2);">
+      <svg width="27" height="27" viewBox="0 0 28 28" fill="none">
+        <path d="M7 5 L22 14 L7 23 Z" stroke="#1F1B14" stroke-width="1.9" stroke-linejoin="round" fill="none"/>
+        <path d="M2 9.5 H7 M2 18.5 H7 M22 14 H26.5" stroke="#1F1B14" stroke-width="1.9" stroke-linecap="round"/>
+        <circle cx="11.5" cy="11" r="1.5" fill="#1F1B14"/><circle cx="11.5" cy="17" r="1.5" fill="#1F1B14"/>
+      </svg>
+    </div>
+
+    <!-- header -->
+    <div style="padding:6px 18px 12px 78px; display:flex; align-items:center; gap:9px;">
+      <span class="px" style="font-size:11px; color:#57503F; letter-spacing:.02em;">silkscreen</span>
+      <div style="flex-grow:1;"></div>
+      <span style="width:7px; height:7px; border-radius:50%; background:#2FBF7A;"></span>
+      <span class="mono" style="font-size:10px; color:#8B8370; text-transform:uppercase; letter-spacing:.07em;">reading</span>
+    </div>
+
+    <div style="height:1px; background:#E0D6BF;"></div>
+
+    <!-- conversation -->
+    <div style="padding:16px 18px; display:flex; flex-direction:column; gap:14px;">
+
+      <div style="align-self:flex-end; max-width:82%; background:#F2ECDD; border-radius:10px; padding:9px 12px;">
+        <div style="font-size:13px; color:#1F1B14; line-height:1.45;">why is C4 flagged?</div>
+      </div>
+
+      <div style="display:flex; gap:9px;">
+        <div style="width:22px; height:22px; border-radius:50%; background:#F5D547; border:1.5px solid #1F1B14; flex-shrink:0; display:flex; align-items:center; justify-content:center; margin-top:1px;">
+          <svg width="12" height="12" viewBox="0 0 28 28" fill="none"><path d="M8 6 L21 14 L8 22 Z" stroke="#1F1B14" stroke-width="2.4" stroke-linejoin="round"/></svg>
+        </div>
+        <div style="flex-grow:1;">
+          <div style="font-size:13px; color:#1F1B14; line-height:1.55; margin-bottom:9px;">The AMS1117 needs a tantalum output cap. You have a 10&micro;F ceramic, and ceramic ESR is too low for the regulator's control loop &mdash; it will oscillate.</div>
+
+          <div style="background:#F7F3E8; border-radius:2px; padding:9px 11px; margin-bottom:9px;">
+            <div class="mono" style="font-size:10px; color:#8B8370; text-transform:uppercase; letter-spacing:.07em; margin-bottom:5px;">datasheet p.9</div>
+            <div class="mono" style="font-size:11.5px; color:#1F1B14; line-height:1.5;">C<sub>OUT</sub> &ge; 22&micro;F tantalum<br>ESR 0.3&ndash;22&#8202;&Omega; for stability</div>
+          </div>
+
+          <div style="font-size:13px; color:#1F1B14; line-height:1.55;">C3 on the input is already 22&micro;F, so this is likely just a mix-up between the two.</div>
+        </div>
+      </div>
+
+      <!-- action -->
+      <div style="display:flex; gap:8px; padding-left:31px;">
+        <button style="font-family:inherit; font-size:12.5px; font-weight:500; padding:8px 14px; background:#E8574A; color:#FFFFFF; border:none; border-bottom:2px solid #C9483C; border-radius:6px; cursor:pointer;">Swap C4 &rarr; 22&micro;F tant.</button>
+        <button style="font-family:inherit; font-size:12.5px; padding:8px 14px; background:transparent; color:#57503F; border:1px solid #E0D6BF; border-radius:6px; cursor:pointer;">Show me where</button>
+      </div>
+    </div>
+
+    <div style="height:1px; background:#E0D6BF;"></div>
+
+    <!-- input -->
+    <div style="padding:11px 14px; display:flex; align-items:center; gap:10px;">
+      <input placeholder="Ask about this board&hellip;" style="flex-grow:1; font-family:inherit; font-size:13px; border:none; outline:none; background:transparent; color:#1F1B14; padding:4px 0;">
+      <span class="mono" style="font-size:10px; color:#8B8370; border:1px solid #E0D6BF; border-radius:3px; padding:2px 6px;">&#8984;K</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

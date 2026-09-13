@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Kaleo mark: a copper-trace K on solder-mask green, with a round pad at
+       each of the K's four endpoints. Vector rendition of
+       app/src-tauri/icons/icon.png; geometry and colours sampled from that PNG. -->
+  <rect x="32" y="32" width="448" height="448" rx="110" fill="#1E6A48"/>
+  <g fill="none" stroke="#D68C42" stroke-width="44" stroke-linejoin="round">
+    <path d="M164.5 124.5 V386.5"/>
+    <path d="M349.5 124.5 L164.5 256 L359.5 386.5"/>
+  </g>
+  <g fill="#D68C42">
+    <circle cx="164.5" cy="124.5" r="38.5"/>
+    <circle cx="164.5" cy="386.5" r="38.5"/>
+    <circle cx="349.5" cy="124.5" r="38.5"/>
+    <circle cx="359.5" cy="386.5" r="38.5"/>
+  </g>
+  <g fill="#1E6A48">
+    <circle cx="164.5" cy="124.5" r="17.5"/>
+    <circle cx="164.5" cy="386.5" r="17.5"/>
+    <circle cx="349.5" cy="124.5" r="17.5"/>
+    <circle cx="359.5" cy="386.5" r="17.5"/>
+  </g>
+</svg>

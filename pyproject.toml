@@ -1,0 +1,90 @@
+[project]
+name = "silkscreen"
+version = "0.1.0"
+description = "Agentic PCB design: datasheet to placed board, with the reasoning shown."
+requires-python = ">=3.11"
+license = { text = "MIT" }
+readme = "README.md"
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+]
+dependencies = [
+    "ortools>=9.10",
+    "kiutils>=1.4.8",
+]
+
+[project.optional-dependencies]
+# Core geometry and file generation stay model-free; providers and training are optional.
+agents = ["google-genai>=2.19,<3", "pypdf>=4.0"]
+cloud = ["google-genai>=2.19,<3", "google-cloud-firestore>=2.16"]
+adk = ["google-adk>=2.8,<3"]
+training = ["tinker>=0.26,<0.27", "tinker-cookbook>=0.5.5,<0.6"]
+# The Slack bot is stdlib-only against the Web API; Pillow buys a PNG preview
+# that Slack renders inline, where an SVG only ever downloads.
+# websocket-client: `python -m slackbot socket` (Socket Mode), imported lazily.
+slack = ["google-genai>=2.19,<3", "pypdf>=4.0", "pillow>=10.0", "websocket-client>=1.7"]
+# The enclosure feature, whole: the B-rep builder, the kernel verifier that
+# measures the acceptance clauses, STEP/STL export and the snapshots. It is
+# the ONLY enclosure engine since 2026-09-08 (docs/ai-cad-plan.md v3) -- the
+# v1 OpenSCAD text path was removed because it built a different box behind a
+# receipt that could not fail. Without this extra the case step refuses in
+# words naming it, and the kernel tests skip. It stays an extra on purpose:
+# OR-Tools + kiutils is the lean install and OCP is 215 MB on disk, and a
+# refusal is what makes an extra honest.
+cad = ["build123d>=0.11,<1", "numpy>=1.26", "pillow>=10.0"]
+# The Zoom front end. Only the live RTMS media socket needs a WebSocket
+# client; webhook verification, the agent and the whole test suite do not,
+# so it is imported lazily and stays out of the default install.
+zoom = ["google-genai>=2.19,<3", "pypdf>=4.0", "websocket-client>=1.7"]
+# The Teams front end. `cryptography` is the RS256 verification of the
+# inbound Bot Framework JWT; without it the endpoint refuses every request
+# rather than accepting one unverified, which is why it is an extra and not
+# a silent optional.
+teams = ["google-genai>=2.19,<3", "pypdf>=4.0", "cryptography>=42"]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+
+[project.scripts]
+# `silkscreen setup` and `silkscreen serve` are subcommands of the dispatcher;
+# anything else is still the plain-language intent the generate CLI takes.
+silkscreen = "silkscreen.onboard:dispatch"
+silkscreen-setup = "silkscreen.onboard:main"
+silkscreen-serve = "silkscreen.serve:main"
+silkscreen-mcp = "silkscreen.mcp.server:main"
+silkscreen-review = "silkscreen.audit.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["engine"]
+include = ["silkscreen*"]
+
+[tool.pytest.ini_options]
+testpaths = [
+    "engine/tests",
+    "service/tests",
+    "slackbot/tests",
+    "billing/tests",
+    "meetings/tests",
+    "googleapps/tests",
+    "zoombot/tests",
+    "teamsbot/tests",
+]
+norecursedirs = ["vendor", ".venv", "frontend", "frontend-archive", "node_modules"]
+pythonpath = ["engine", "."]
+filterwarnings = [
+    # google-adk deprecating its own internals; nothing in silkscreen uses it.
+    "ignore:BaseAgentConfig is deprecated:DeprecationWarning",
+]
+
+[tool.ruff]
+line-length = 88
+# Vendored third-party code is not ours to reformat.
+exclude = ["vendor"]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

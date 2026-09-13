@@ -1,0 +1,16 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html",    "x": 0,    "y": 0,    "w": 1440, "h": 900, "title": "Schematic — Drafting Table" },
+    { "file": "Board.dc.html",   "x": 1560, "y": 0,    "w": 1440, "h": 900, "title": "Board — KiCad well" },
+    { "file": "Review.dc.html",  "x": 0,    "y": 1060, "w": 1440, "h": 900, "title": "Design review — the wedge" },
+    { "file": "Teach.dc.html",   "x": 1560, "y": 1060, "w": 1440, "h": 900, "title": "Ghost cursor — Slew Rate" },
+    { "file": "Overlay.dc.html", "x": 3120, "y": 0,    "w": 520,  "h": 660, "title": "Overlay assistant" }
+  ],
+  "annotations": [
+    { "id": "note-directions", "x": 0, "y": -190, "w": 620, "text": "Silkscreen UI — two directions in one product.\n\nThe app is DRAFTING TABLE: KiCad's own #F5F4EF schematic paper, oxblood/green/navy symbol colours, square corners, Chivo + Chivo Mono. Light, which is the differentiator — every competitor is a dark cockpit.\n\nThe assistant and the teaching cursor are SLEW RATE: warm stock, solder-red, silkscreen yellow, the op-amp mascot, springy motion." },
+    { "id": "note-board", "x": 1560, "y": -190, "w": 620, "text": "The board canvas keeps KiCad's exact values as an inset dark well — #001023 ground, #C83434 F.Cu, #4D7FC4 B.Cu, #F2EDA1 silkscreen, #FF26E2 courtyard, #00F8FF ratsnest.\n\nThis mirrors KiCad's own split: light schematic, dark board. A KiCad user reads meaning from colour before they read a word." },
+    { "id": "note-review", "x": 0, "y": 2000, "w": 620, "text": "This is the actual product thesis, not the layout engine.\n\nEvery finding cites the datasheet page it came from, and the right rail states plainly what was NOT checked. That admission is the credibility — it's what separates this from a tool that says 'looks good' and lets you order 50 dead boards." },
+    { "id": "note-teach", "x": 1560, "y": 2000, "w": 620, "text": "The teaching cursor: it moves along an arc, trails a dotted cyan route, and lands a solder-joint dot on the target. The rest of the UI dims rather than going dark.\n\n'Do it for me' and 'I'll try' are the whole product philosophy in two buttons — automate the beginner out of the loop, or bring them into it." }
+  ],
+  "launch": { "view": "canvas" }
+}

@@ -1,0 +1,68 @@
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--fs-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+#app { height: 100%; }
+
+h1, h2, h3, p { margin: 0; }
+
+a { color: var(--navy); }
+a:hover { color: var(--oxblood); }
+
+button, input, textarea, select {
+  font: inherit;
+  color: inherit;
+}
+
+button { cursor: pointer; }
+button:disabled { cursor: default; }
+
+:focus-visible { outline: 1px solid var(--navy); outline-offset: 1px; }
+
+/* A surface declares its material role in markup. Chrome, panels, popovers,
+   and sticky surfaces blur the page behind them in glass mode; tint and
+   canvas are deliberate no-filter roles, which prevents nested blur stacks. */
+[data-material='chrome'],
+[data-material='panel'],
+[data-material='popover'],
+[data-material='sticky'] {
+  backdrop-filter: var(--material-filter);
+  -webkit-backdrop-filter: var(--material-filter);
+}
+
+[data-material='panel'],
+[data-material='popover'] {
+  border-radius: var(--panel-radius);
+}
+
+/* the mockup's three utilities */
+.lbl {
+  font-family: var(--font-mono);
+  font-size: var(--fs-lbl);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.cite {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono-sm);
+  color: var(--ink-soft);
+}

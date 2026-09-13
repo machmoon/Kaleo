@@ -1,0 +1,1850 @@
+{
+  "model": "gemini-3.5-flash-lite",
+  "plan": false,
+  "summary": {
+    "trials": 18,
+    "validated": 18,
+    "scored_on_function": 16,
+    "correct": 0,
+    "unscored": 2,
+    "mean_rounds": 1.5,
+    "first_round_clean": 10,
+    "dropped_transport_failures": 0
+  },
+  "trials": [
+    {
+      "case": "ldo",
+      "trial": 1,
+      "validated": true,
+      "rounds": 1,
+      "validation_errors": [],
+      "structural_problems": [
+        "the request named 'AMS1117'; the proposal has ['U1', 'J_IN', 'J_OUT']",
+        "the request forbade connectors; the proposal added ['J_IN', 'J_OUT']"
+      ],
+      "simulated": false,
+      "refusal": "no single fixed-output regulator in the proposal; the registry bound none, or bound more than one",
+      "clauses": [],
+      "correct": false,
+      "circuit": {
+        "devices": {
+          "U1": {
+            "pins": {
+              "GND": "1",
+              "OUT": "2",
+              "IN": "3"
+            }
+          },
+          "J_IN": {
+            "kind": "connector",
+            "package": "TerminalBlock_2P_5.08mm",
+            "pins": {
+              "P1": "1",
+              "P2": "2"
+            }
+          },
+          "J_OUT": {
+            "kind": "connector",
+            "package": "TerminalBlock_2P_5.08mm",
+            "pins": {
+              "P1": "1",
+              "P2": "2"
+            }
+          }
+        },
+        "passives": {
+          "c_in": {
+            "type": "capacitor",
+            "value": "10uF"
+          },
+          "c_out": {
+            "type": "capacitor",
+            "value": "22uF"
+          }
+        },
+        "nets": {
+          "VIN": [
+            "J_IN.P1",
+            "U1.IN",
+            "c_in.1"
+          ],
+          "GND": [
+            "J_IN.P2",
+            "J_OUT.P2",
+            "U1.GND",
+            "c_in.2",
+            "c_out.2"
+          ],
+          "+3V3": [
+            "J_OUT.P1",
+            "U1.OUT",
+            "c_out.1"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 2.18,
+      "model_error": null
+    },
+    {
+      "case": "ldo",
+      "trial": 2,
+      "validated": true,
+      "rounds": 1,
+      "validation_errors": [],
+      "structural_problems": [
+        "the request named 'AMS1117'; the proposal has ['U1', 'CON_IN', 'CON_OUT']",
+        "the request forbade connectors; the proposal added ['CON_IN', 'CON_OUT']"
+      ],
+      "simulated": false,
+      "refusal": "no single fixed-output regulator in the proposal; the registry bound none, or bound more than one",
+      "clauses": [],
+      "correct": false,
+      "circuit": {
+        "devices": {
+          "U1": {
+            "pins": {
+              "GND": "1",
+              "VOUT": "2",
+              "VIN": "3"
+            }
+          },
+          "CON_IN": {
+            "kind": "connector",
+            "package": "PinHeader_1x02_P2.54mm",
+            "pins": {
+              "P1": "1",
+              "P2": "2"
+            }
+          },
+          "CON_OUT": {
+            "kind": "connector",
+            "package": "PinHeader_1x02_P2.54mm",
+            "pins": {
+              "P1": "1",
+              "P2": "2"
+            }
+          }
+        },
+        "passives": {
+          "c_in": {
+            "type": "capacitor",
+            "value": "10uF"
+          },
+          "c_out": {
+            "type": "capacitor",
+            "value": "22uF"
+          }
+        },
+        "nets": {
+          "VIN": [
+            "CON_IN.P1",
+            "U1.VIN",
+            "c_in.1"
+          ],
+          "GND": [
+            "CON_IN.P2",
+            "CON_OUT.P2",
+            "U1.GND",
+            "c_in.2",
+            "c_out.2"
+          ],
+          "+3V3": [
+            "CON_OUT.P1",
+            "U1.VOUT",
+            "c_out.1"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 1.29,
+      "model_error": null
+    },
+    {
+      "case": "blinker",
+      "trial": 1,
+      "validated": true,
+      "rounds": 1,
+      "validation_errors": [],
+      "structural_problems": [
+        "the request named '555'; the proposal has ['U1', 'BAT1']",
+        "the request forbade batterys; the proposal added ['BAT1']"
+      ],
+      "simulated": false,
+      "refusal": "no single 555 timer in the proposal",
+      "clauses": [],
+      "correct": false,
+      "circuit": {
+        "devices": {
+          "U1": {
+            "pins": {
+              "GND": "1",
+              "TRIG": "2",
+              "OUT": "3",
+              "RESET": "4",
+              "CTRL": "5",
+              "THRES": "6",
+              "DISCH": "7",
+              "VCC": "8"
+            }
+          },
+          "BAT1": {
+            "kind": "battery",
+            "package": "BatteryHolder_AAA_1x",
+            "pins": {
+              "P": "1",
+              "N": "2"
+            }
+          }
+        },
+        "passives": {
+          "c_dec_vcc_u1": {
+            "type": "capacitor",
+            "value": "100nF"
+          },
+          "c_ctrl": {
+            "type": "capacitor",
+            "value": "10nF"
+          },
+          "c_timing": {
+            "type": "capacitor",
+            "value": "10uF"
+          },
+          "r_a": {
+            "type": "resistor",
+            "value": "10k"
+          },
+          "r_b": {
+            "type": "resistor",
+            "value": "68k"
+          },
+          "r_led": {
+            "type": "resistor",
+            "value": "470"
+          },
+          "d_led": {
+            "type": "diode",
+            "value": "LED"
+          }
+        },
+        "nets": {
+          "+9V": [
+            "BAT1.P",
+            "U1.VCC",
+            "U1.RESET",
+            "c_dec_vcc_u1.1",
+            "r_a.1"
+          ],
+          "GND": [
+            "BAT1.N",
+            "U1.GND",
+            "c_dec_vcc_u1.2",
+            "c_ctrl.2",
+            "c_timing.2",
+            "d_led.2"
+          ],
+          "CTRL_NET": [
+            "U1.CTRL",
+            "c_ctrl.1"
+          ],
+          "DISCH_NET": [
+            "U1.DISCH",
+            "r_a.2",
+            "r_b.1"
+          ],
+          "TRIG_THRES_NET": [
+            "U1.TRIG",
+            "U1.THRES",
+            "r_b.2",
+            "c_timing.1"
+          ],
+          "OUT_NET": [
+            "U1.OUT",
+            "r_led.1"
+          ],
+          "LED_NET": [
+            "r_led.2",
+            "d_led.1"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 2.51,
+      "model_error": null
+    },
+    {
+      "case": "blinker",
+      "trial": 2,
+      "validated": true,
+      "rounds": 1,
+      "validation_errors": [],
+      "structural_problems": [
+        "the request named '555'; the proposal has ['U1', 'BAT1']",
+        "the request forbade batterys; the proposal added ['BAT1']"
+      ],
+      "simulated": false,
+      "refusal": "no single 555 timer in the proposal",
+      "clauses": [],
+      "correct": false,
+      "circuit": {
+        "devices": {
+          "U1": {
+            "pins": {
+              "GND": "1",
+              "TRIG": "2",
+              "OUT": "3",
+              "RESET": "4",
+              "CTRL": "5",
+              "THRES": "6",
+              "DISCH": "7",
+              "VCC": "8"
+            }
+          },
+          "BAT1": {
+            "kind": "battery",
+            "package": "BatteryHolder_AAA_1x",
+            "pins": {
+              "P": "1",
+              "N": "2"
+            }
+          }
+        },
+        "passives": {
+          "c_dec_vcc_u1": {
+            "type": "capacitor",
+            "value": "100nF"
+          },
+          "c_ctrl": {
+            "type": "capacitor",
+            "value": "10nF"
+          },
+          "c_timing": {
+            "type": "capacitor",
+            "value": "10uF"
+          },
+          "r_a": {
+            "type": "resistor",
+            "value": "100k"
+          },
+          "r_b": {
+            "type": "resistor",
+            "value": "68k"
+          },
+          "r_led": {
+            "type": "resistor",
+            "value": "470"
+          },
+          "d_led": {
+            "type": "diode",
+            "value": "LED"
+          },
+          "c_bulk": {
+            "type": "capacitor",
+            "value": "100uF"
+          }
+        },
+        "nets": {
+          "+9V": [
+            "BAT1.P",
+            "U1.VCC",
+            "U1.RESET",
+            "c_dec_vcc_u1.1",
+            "c_bulk.1",
+            "r_a.1"
+          ],
+          "GND": [
+            "BAT1.N",
+            "U1.GND",
+            "c_dec_vcc_u1.2",
+            "c_ctrl.2",
+            "c_timing.2",
+            "d_led.2",
+            "c_bulk.2"
+          ],
+          "CTRL_NET": [
+            "U1.CTRL",
+            "c_ctrl.1"
+          ],
+          "TRIG_THRES_NET": [
+            "U1.TRIG",
+            "U1.THRES",
+            "c_timing.1",
+            "r_b.2"
+          ],
+          "DISCH_NET": [
+            "U1.DISCH",
+            "r_a.2",
+            "r_b.1"
+          ],
+          "OUT_NET": [
+            "U1.OUT",
+            "r_led.1"
+          ],
+          "LED_NET": [
+            "r_led.2",
+            "d_led.1"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 2.07,
+      "model_error": null
+    },
+    {
+      "case": "ref25",
+      "trial": 1,
+      "validated": true,
+      "rounds": 1,
+      "validation_errors": [],
+      "structural_problems": [
+        "the request named 'LM358'; the proposal has ['U1', 'J_IN', 'J_OUT']",
+        "the request forbade connectors; the proposal added ['J_IN', 'J_OUT']"
+      ],
+      "simulated": false,
+      "refusal": "no single op-amp in the proposal",
+      "clauses": [],
+      "correct": false,
+      "circuit": {
+        "devices": {
+          "U1": {
+            "pins": {
+              "IN1+": "3",
+              "IN1-": "2",
+              "OUT1": "1",
+              "IN2+": "5",
+              "IN2-": "6",
+              "OUT2": "7",
+              "VCC": "8",
+              "GND": "4"
+            }
+          },
+          "J_IN": {
+            "kind": "connector",
+            "package": "JST_PH_2P",
+            "pins": {
+              "P": "1",
+              "N": "2"
+            }
+          },
+          "J_OUT": {
+            "kind": "connector",
+            "package": "JST_PH_2P",
+            "pins": {
+              "P": "1",
+              "N": "2"
+            }
+          }
+        },
+        "passives": {
+          "R1": {
+            "type": "resistor",
+            "value": "10k"
+          },
+          "R2": {
+            "type": "resistor",
+            "value": "10k"
+          },
+          "C_DEC": {
+            "type": "capacitor",
+            "value": "100nF"
+          },
+          "R_UNUSED_IN": {
+            "type": "resistor",
+            "value": "10k"
+          }
+        },
+        "nets": {
+          "+5V": [
+            "J_IN.P",
+            "U1.VCC",
+            "C_DEC.1",
+            "R1.1"
+          ],
+          "GND": [
+            "J_IN.N",
+            "U1.GND",
+            "C_DEC.2",
+            "R2.2",
+            "R_UNUSED_IN.2",
+            "J_OUT.N"
+          ],
+          "REF_DIV": [
+            "R1.2",
+            "R2.1",
+            "U1.IN1+"
+          ],
+          "REF_BUF": [
+            "U1.OUT1",
+            "U1.IN1-",
+            "J_OUT.P"
+          ],
+          "UNUSED_FB": [
+            "U1.OUT2",
+            "U1.IN2-"
+          ],
+          "UNUSED_IN": [
+            "U1.IN2+",
+            "R_UNUSED_IN.1"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 2.09,
+      "model_error": null
+    },
+    {
+      "case": "ref25",
+      "trial": 2,
+      "validated": true,
+      "rounds": 2,
+      "validation_errors": [
+        "net '+5V': 'PWR' has no pin named '1' (known: ['PIN1', 'PIN2']...)",
+        "net 'GND': 'PWR' has no pin named '2' (known: ['PIN1', 'PIN2']...)",
+        "net 'UNUSED_POS' has 1 endpoint(s); a net joining fewer than 2 pins is not a connection"
+      ],
+      "structural_problems": [
+        "the request named 'LM358'; the proposal has ['U1', 'PWR']",
+        "the request forbade connectors; the proposal added ['PWR']"
+      ],
+      "simulated": false,
+      "refusal": "no single op-amp in the proposal",
+      "clauses": [],
+      "correct": false,
+      "circuit": {
+        "devices": {
+          "U1": {
+            "pins": {
+              "IN1+": "3",
+              "IN1-": "2",
+              "OUT1": "1",
+              "IN2+": "5",
+              "IN2-": "6",
+              "OUT2": "7",
+              "VCC": "8",
+              "GND": "4"
+            }
+          },
+          "PWR": {
+            "kind": "connector",
+            "package": "PinHeader_1x02_P2.54mm",
+            "pins": {
+              "P1": "1",
+              "P2": "2"
+            }
+          }
+        },
+        "passives": {
+          "c_dec_vcc_u1": {
+            "type": "capacitor",
+            "value": "100nF"
+          },
+          "r1": {
+            "type": "resistor",
+            "value": "10k"
+          },
+          "r2": {
+            "type": "resistor",
+            "value": "10k"
+          },
+          "r_tie": {
+            "type": "resistor",
+            "value": "10k"
+          },
+          "r_pos": {
+            "type": "resistor",
+            "value": "10k"
+          }
+        },
+        "nets": {
+          "+5V": [
+            "PWR.P1",
+            "U1.VCC",
+            "c_dec_vcc_u1.1",
+            "r1.1",
+            "r_pos.1"
+          ],
+          "GND": [
+            "PWR.P2",
+            "U1.GND",
+            "c_dec_vcc_u1.2",
+            "r2.2",
+            "r_tie.2"
+          ],
+          "VREF_DIV": [
+            "r1.2",
+            "r2.1",
+            "U1.IN1+"
+          ],
+          "VREF_OUT": [
+            "U1.OUT1",
+            "U1.IN1-"
+          ],
+          "UNUSED_IN": [
+            "U1.IN2-",
+            "U1.OUT2",
+            "r_tie.1"
+          ],
+          "UNUSED_POS": [
+            "U1.IN2+",
+            "r_pos.2"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 3.92,
+      "model_error": null
+    },
+    {
+      "case": "attiny",
+      "trial": 1,
+      "validated": true,
+      "rounds": 2,
+      "validation_errors": [
+        "pin 'U1.GND' is on 2 nets (GND, LED_CATHODE); a pin joins exactly one net -- if these are the same node, merge them into one net"
+      ],
+      "structural_problems": [
+        "the request named 'ATTINY'; the proposal has ['U1', 'J1']",
+        "the request forbade connectors; the proposal added ['J1']"
+      ],
+      "simulated": false,
+      "refusal": "a microcontroller's behaviour is its firmware; no SPICE model of it exists, here or anywhere (registry._REFUSALS)",
+      "clauses": [],
+      "correct": false,
+      "circuit": {
+        "devices": {
+          "U1": {
+            "pins": {
+              "PB5": "1",
+              "PB3": "2",
+              "PB4": "3",
+              "GND": "4",
+              "PB0": "5",
+              "PB1": "6",
+              "PB2": "7",
+              "VCC": "8"
+            }
+          },
+          "J1": {
+            "kind": "connector",
+            "package": "USB_C_Receptacle_Power",
+            "pins": {
+              "VBUS": "A4",
+              "GND": "A1"
+            }
+          }
+        },
+        "passives": {
+          "C1": {
+            "type": "capacitor",
+            "value": "100nF"
+          },
+          "R1": {
+            "type": "resistor",
+            "value": "10k"
+          },
+          "R2": {
+            "type": "resistor",
+            "value": "330"
+          },
+          "D1": {
+            "type": "diode",
+            "value": "LED"
+          }
+        },
+        "nets": {
+          "GND": [
+            "U1.GND",
+            "C1.2",
+            "J1.GND",
+            "D1.2"
+          ],
+          "+5V": [
+            "U1.VCC",
+            "C1.1",
+            "R1.1",
+            "J1.VBUS"
+          ],
+          "RESET": [
+            "U1.PB5",
+            "R1.2"
+          ],
+          "LED_DRIVE": [
+            "U1.PB1",
+            "R2.1"
+          ],
+          "LED_ANODE": [
+            "R2.2",
+            "D1.1"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 3.93,
+      "model_error": null
+    },
+    {
+      "case": "attiny",
+      "trial": 2,
+      "validated": true,
+      "rounds": 1,
+      "validation_errors": [],
+      "structural_problems": [
+        "the request named 'ATTINY'; the proposal has ['U1', 'J_PWR']",
+        "the request forbade connectors; the proposal added ['J_PWR']"
+      ],
+      "simulated": false,
+      "refusal": "a microcontroller's behaviour is its firmware; no SPICE model of it exists, here or anywhere (registry._REFUSALS)",
+      "clauses": [],
+      "correct": false,
+      "circuit": {
+        "devices": {
+          "U1": {
+            "pins": {
+              "RESET": "1",
+              "PB3": "2",
+              "PB4": "3",
+              "GND": "4",
+              "PB1": "5",
+              "PB0": "6",
+              "PB2": "7",
+              "VCC": "8"
+            }
+          },
+          "J_PWR": {
+            "kind": "connector",
+            "package": "JST_PH_2P",
+            "pins": {
+              "P": "1",
+              "N": "2"
+            }
+          }
+        },
+        "passives": {
+          "c_dec_vcc_u1": {
+            "type": "capacitor",
+            "value": "100nF"
+          },
+          "c_bulk_vcc": {
+            "type": "capacitor",
+            "value": "10uF"
+          },
+          "r_rst": {
+            "type": "resistor",
+            "value": "10kOhm"
+          },
+          "r_led": {
+            "type": "resistor",
+            "value": "330Ohm"
+          },
+          "d_status": {
+            "type": "diode",
+            "value": "LED"
+          }
+        },
+        "nets": {
+          "+5V": [
+            "J_PWR.P",
+            "U1.VCC",
+            "c_dec_vcc_u1.1",
+            "c_bulk_vcc.1",
+            "r_rst.1"
+          ],
+          "GND": [
+            "J_PWR.N",
+            "U1.GND",
+            "c_dec_vcc_u1.2",
+            "c_bulk_vcc.2",
+            "d_status.2"
+          ],
+          "RESET": [
+            "U1.RESET",
+            "r_rst.2"
+          ],
+          "PB1_LED": [
+            "U1.PB1",
+            "r_led.1"
+          ],
+          "LED_GND": [
+            "r_led.2",
+            "d_status.1"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 1.73,
+      "model_error": null
+    },
+    {
+      "case": "barrel_ldo",
+      "trial": 1,
+      "validated": true,
+      "rounds": 2,
+      "validation_errors": [
+        "net 'NET_SPARE_1' has 1 endpoint(s); a net joining fewer than 2 pins is not a connection",
+        "net 'NET_SPARE_2' has 1 endpoint(s); a net joining fewer than 2 pins is not a connection"
+      ],
+      "structural_problems": [],
+      "simulated": false,
+      "refusal": "UnsimulatableError: cannot simulate TP1: a device in the Silkscreen IR is a pin map with no behaviour. Supply Testbench.models[name] = SubcircuitModel(...) with the part's SPICE model to simulate it",
+      "clauses": [],
+      "correct": null,
+      "circuit": {
+        "devices": {
+          "AMS1117-3.3": {
+            "pins": {
+              "GND": "1",
+              "OUT": "2",
+              "IN": "3"
+            }
+          },
+          "J1": {
+            "kind": "connector",
+            "package": "Barrel_Jack_5.5x2.1mm",
+            "pins": {
+              "POS": "1",
+              "NEG": "2"
+            }
+          },
+          "J2": {
+            "kind": "connector",
+            "package": "TerminalBlock_2P_5.08mm",
+            "pins": {
+              "1": "1",
+              "2": "2"
+            }
+          },
+          "J3": {
+            "kind": "connector",
+            "package": "PinHeader_1x04_P2.54mm",
+            "pins": {
+              "1": "1",
+              "2": "2",
+              "3": "3",
+              "4": "4"
+            }
+          },
+          "TP1": {
+            "kind": "testpoint",
+            "package": "TestPoint_Pad_1.5x1.5mm",
+            "pins": {
+              "1": "1"
+            }
+          }
+        },
+        "passives": {
+          "c_bulk_in": {
+            "type": "capacitor",
+            "value": "10uF"
+          },
+          "c_bulk_out": {
+            "type": "capacitor",
+            "value": "22uF"
+          },
+          "r_spare_1": {
+            "type": "resistor",
+            "value": "10k"
+          },
+          "r_spare_2": {
+            "type": "resistor",
+            "value": "10k"
+          }
+        },
+        "nets": {
+          "VIN": [
+            "J1.POS",
+            "AMS1117-3.3.IN",
+            "c_bulk_in.1"
+          ],
+          "GND": [
+            "J1.NEG",
+            "AMS1117-3.3.GND",
+            "J2.2",
+            "J3.1",
+            "c_bulk_in.2",
+            "c_bulk_out.2",
+            "r_spare_1.2",
+            "r_spare_2.2"
+          ],
+          "+3V3": [
+            "AMS1117-3.3.OUT",
+            "J2.1",
+            "J3.2",
+            "TP1.1",
+            "c_bulk_out.1"
+          ],
+          "NET_SPARE_1": [
+            "J3.3",
+            "r_spare_1.1"
+          ],
+          "NET_SPARE_2": [
+            "J3.4",
+            "r_spare_2.1"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 6.42,
+      "model_error": null
+    },
+    {
+      "case": "barrel_ldo",
+      "trial": 2,
+      "validated": true,
+      "rounds": 2,
+      "validation_errors": [
+        "net 'NET_SPARE1' has 1 endpoint(s); a net joining fewer than 2 pins is not a connection",
+        "net 'NET_SPARE2' has 1 endpoint(s); a net joining fewer than 2 pins is not a connection"
+      ],
+      "structural_problems": [],
+      "simulated": false,
+      "refusal": "UnsimulatableError: cannot simulate TP1: a device in the Silkscreen IR is a pin map with no behaviour. Supply Testbench.models[name] = SubcircuitModel(...) with the part's SPICE model to simulate it",
+      "clauses": [],
+      "correct": null,
+      "circuit": {
+        "devices": {
+          "AMS1117-3.3": {
+            "pins": {
+              "GND": "1",
+              "VOUT": "2",
+              "VIN": "3"
+            }
+          },
+          "J1": {
+            "kind": "connector",
+            "package": "Barrel_Jack_5.5x2.1mm",
+            "pins": {
+              "P": "1",
+              "N": "2"
+            }
+          },
+          "J2": {
+            "kind": "connector",
+            "package": "TerminalBlock_2P_5.08mm",
+            "pins": {
+              "P1": "1",
+              "P2": "2"
+            }
+          },
+          "J3": {
+            "kind": "connector",
+            "package": "PinHeader_1x04_P2.54mm",
+            "pins": {
+              "P1": "1",
+              "P2": "2",
+              "P3": "3",
+              "P4": "4"
+            }
+          },
+          "TP1": {
+            "kind": "testpoint",
+            "package": "TestPoint_Pad_1.5x1.5mm",
+            "pins": {
+              "P": "1"
+            }
+          }
+        },
+        "passives": {
+          "c_in": {
+            "type": "capacitor",
+            "value": "10uF"
+          },
+          "c_out": {
+            "type": "capacitor",
+            "value": "22uF"
+          }
+        },
+        "nets": {
+          "VIN": [
+            "J1.P",
+            "AMS1117-3.3.VIN",
+            "c_in.1"
+          ],
+          "GND": [
+            "J1.N",
+            "AMS1117-3.3.GND",
+            "J2.P2",
+            "J3.P1",
+            "c_in.2",
+            "c_out.2"
+          ],
+          "+3V3": [
+            "AMS1117-3.3.VOUT",
+            "J2.P1",
+            "J3.P2",
+            "TP1.P",
+            "c_out.1",
+            "J3.P3",
+            "J3.P4"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 4.1,
+      "model_error": null
+    },
+    {
+      "case": "usbc_ldo",
+      "trial": 1,
+      "validated": true,
+      "rounds": 2,
+      "validation_errors": [
+        "net 'SIG3' has 1 endpoint(s); a net joining fewer than 2 pins is not a connection"
+      ],
+      "structural_problems": [
+        "the request named 'AMS1117'; the proposal has ['U1', 'SW1', 'J_USB', 'J_OUT']"
+      ],
+      "simulated": false,
+      "refusal": "no single fixed-output regulator in the proposal; the registry bound none, or bound more than one",
+      "clauses": [],
+      "correct": false,
+      "circuit": {
+        "devices": {
+          "U1": {
+            "pins": {
+              "ADJ": "1",
+              "OUT": "2",
+              "IN": "3"
+            }
+          },
+          "SW1": {
+            "kind": "switch",
+            "package": "SW_SPST_TL3305A",
+            "pins": {
+              "1": "1",
+              "2": "2"
+            }
+          },
+          "J_USB": {
+            "kind": "connector",
+            "package": "USB_C_Receptacle_Power",
+            "pins": {
+              "VBUS": "A4",
+              "GND": "A1",
+              "CC1": "A5",
+              "CC2": "B5"
+            }
+          },
+          "J_OUT": {
+            "kind": "connector",
+            "package": "PinHeader_1x04_P2.54mm",
+            "pins": {
+              "1": "1",
+              "2": "2",
+              "3": "3",
+              "4": "4"
+            }
+          }
+        },
+        "passives": {
+          "c_cc1": {
+            "type": "resistor",
+            "value": "5.1k"
+          },
+          "c_cc2": {
+            "type": "resistor",
+            "value": "5.1k"
+          },
+          "c_in": {
+            "type": "capacitor",
+            "value": "10uF"
+          },
+          "c_out": {
+            "type": "capacitor",
+            "value": "22uF"
+          },
+          "r_rst": {
+            "type": "resistor",
+            "value": "10k"
+          }
+        },
+        "nets": {
+          "GND": [
+            "J_USB.GND",
+            "c_cc1.2",
+            "c_cc2.2",
+            "c_in.2",
+            "c_out.2",
+            "U1.ADJ",
+            "SW1.2",
+            "J_OUT.4"
+          ],
+          "VIN": [
+            "J_USB.VBUS",
+            "c_in.1",
+            "U1.IN"
+          ],
+          "+3V3": [
+            "U1.OUT",
+            "c_out.1",
+            "r_rst.1",
+            "J_OUT.1",
+            "J_OUT.3"
+          ],
+          "CC1": [
+            "J_USB.CC1",
+            "c_cc1.1"
+          ],
+          "CC2": [
+            "J_USB.CC2",
+            "c_cc2.1"
+          ],
+          "NRST": [
+            "r_rst.2",
+            "SW1.1",
+            "J_OUT.2"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 4.83,
+      "model_error": null
+    },
+    {
+      "case": "usbc_ldo",
+      "trial": 2,
+      "validated": true,
+      "rounds": 3,
+      "validation_errors": [
+        "net 'NET_J2_P3' has 1 endpoint(s); a net joining fewer than 2 pins is not a connection",
+        "'SW1' is a SW_SPST_TL3305A with 2 pins, but the circuit declares 4. Refusing to place a connector on a pattern that does not match its pinout."
+      ],
+      "structural_problems": [
+        "the request named 'AMS1117'; the proposal has ['U1', 'SW1', 'J1', 'J2']"
+      ],
+      "simulated": false,
+      "refusal": "no single fixed-output regulator in the proposal; the registry bound none, or bound more than one",
+      "clauses": [],
+      "correct": false,
+      "circuit": {
+        "devices": {
+          "U1": {
+            "pins": {
+              "GND": "1",
+              "OUT": "2",
+              "IN": "3",
+              "ADJ": "4"
+            }
+          },
+          "SW1": {
+            "kind": "switch",
+            "package": "SW_SPST_TL3305A",
+            "pins": {
+              "1": "1",
+              "2": "2"
+            }
+          },
+          "J1": {
+            "kind": "connector",
+            "package": "USB_C_Receptacle_Power",
+            "pins": {
+              "VBUS": "1",
+              "GND": "2",
+              "CC1": "3",
+              "CC2": "4",
+              "SHIELD": "5"
+            }
+          },
+          "J2": {
+            "kind": "connector",
+            "package": "PinHeader_1x04_P2.54mm",
+            "pins": {
+              "1": "1",
+              "2": "2",
+              "3": "3",
+              "4": "4"
+            }
+          }
+        },
+        "passives": {
+          "c_cc1": {
+            "type": "resistor",
+            "value": "5.1k"
+          },
+          "c_cc2": {
+            "type": "resistor",
+            "value": "5.1k"
+          },
+          "c_in": {
+            "type": "capacitor",
+            "value": "10uF"
+          },
+          "c_out": {
+            "type": "capacitor",
+            "value": "22uF"
+          },
+          "r_rst": {
+            "type": "resistor",
+            "value": "10k"
+          }
+        },
+        "nets": {
+          "GND": [
+            "J1.GND",
+            "J1.SHIELD",
+            "c_cc1.2",
+            "c_cc2.2",
+            "c_in.2",
+            "U1.GND",
+            "c_out.2",
+            "SW1.2",
+            "J2.4"
+          ],
+          "VBUS": [
+            "J1.VBUS",
+            "c_in.1",
+            "U1.IN"
+          ],
+          "CC1": [
+            "J1.CC1",
+            "c_cc1.1"
+          ],
+          "CC2": [
+            "J1.CC2",
+            "c_cc2.1"
+          ],
+          "+3V3": [
+            "U1.OUT",
+            "U1.ADJ",
+            "c_out.1",
+            "r_rst.1",
+            "J2.1",
+            "J2.3"
+          ],
+          "NRST": [
+            "r_rst.2",
+            "SW1.1",
+            "J2.2"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 7.38,
+      "model_error": null
+    },
+    {
+      "case": "ldo5v",
+      "trial": 1,
+      "validated": true,
+      "rounds": 1,
+      "validation_errors": [],
+      "structural_problems": [
+        "the request named 'AMS1117'; the proposal has ['U1', 'J1', 'J2']"
+      ],
+      "simulated": false,
+      "refusal": "no single fixed-output regulator in the proposal; the registry bound none, or bound more than one",
+      "clauses": [],
+      "correct": false,
+      "circuit": {
+        "devices": {
+          "U1": {
+            "pins": {
+              "GND": "1",
+              "OUT": "2",
+              "IN": "3"
+            }
+          },
+          "J1": {
+            "kind": "connector",
+            "package": "TerminalBlock_2P_5.08mm",
+            "pins": {
+              "1": "1",
+              "2": "2"
+            }
+          },
+          "J2": {
+            "kind": "connector",
+            "package": "PinHeader_1x02_P2.54mm",
+            "pins": {
+              "1": "1",
+              "2": "2"
+            }
+          }
+        },
+        "passives": {
+          "c_in": {
+            "type": "capacitor",
+            "value": "10uF"
+          },
+          "c_out": {
+            "type": "capacitor",
+            "value": "22uF"
+          }
+        },
+        "nets": {
+          "VIN": [
+            "J1.1",
+            "U1.IN",
+            "c_in.1"
+          ],
+          "GND": [
+            "J1.2",
+            "U1.GND",
+            "J2.2",
+            "c_in.2",
+            "c_out.2"
+          ],
+          "+5V": [
+            "U1.OUT",
+            "J2.1",
+            "c_out.1"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 1.37,
+      "model_error": null
+    },
+    {
+      "case": "ldo5v",
+      "trial": 2,
+      "validated": true,
+      "rounds": 1,
+      "validation_errors": [],
+      "structural_problems": [
+        "the request named 'AMS1117'; the proposal has ['U1', 'J1', 'J2']"
+      ],
+      "simulated": false,
+      "refusal": "no single fixed-output regulator in the proposal; the registry bound none, or bound more than one",
+      "clauses": [],
+      "correct": false,
+      "circuit": {
+        "devices": {
+          "U1": {
+            "pins": {
+              "GND": "1",
+              "VOUT": "2",
+              "VIN": "3"
+            }
+          },
+          "J1": {
+            "kind": "connector",
+            "package": "TerminalBlock_2P_5.08mm",
+            "pins": {
+              "P1": "1",
+              "P2": "2"
+            }
+          },
+          "J2": {
+            "kind": "connector",
+            "package": "PinHeader_1x02_P2.54mm",
+            "pins": {
+              "P1": "1",
+              "P2": "2"
+            }
+          }
+        },
+        "passives": {
+          "c_in": {
+            "type": "capacitor",
+            "value": "10uF"
+          },
+          "c_out": {
+            "type": "capacitor",
+            "value": "22uF"
+          }
+        },
+        "nets": {
+          "VIN": [
+            "J1.P1",
+            "U1.VIN",
+            "c_in.1"
+          ],
+          "GND": [
+            "J1.P2",
+            "U1.GND",
+            "J2.P2",
+            "c_in.2",
+            "c_out.2"
+          ],
+          "+5V": [
+            "U1.VOUT",
+            "J2.P1",
+            "c_out.1"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 17.31,
+      "model_error": null
+    },
+    {
+      "case": "blinker10",
+      "trial": 1,
+      "validated": true,
+      "rounds": 1,
+      "validation_errors": [],
+      "structural_problems": [
+        "the request named '555'; the proposal has ['U1', 'J_PWR', 'J_LED']"
+      ],
+      "simulated": false,
+      "refusal": "no single 555 timer in the proposal",
+      "clauses": [],
+      "correct": false,
+      "circuit": {
+        "devices": {
+          "U1": {
+            "pins": {
+              "GND": "1",
+              "TRIG": "2",
+              "OUT": "3",
+              "RESET": "4",
+              "CTRL": "5",
+              "THR": "6",
+              "DISCH": "7",
+              "VCC": "8"
+            }
+          },
+          "J_PWR": {
+            "kind": "connector",
+            "package": "JST_PH_2P",
+            "pins": {
+              "P": "1",
+              "N": "2"
+            }
+          },
+          "J_LED": {
+            "kind": "connector",
+            "package": "PinHeader_1x02_P2.54mm",
+            "pins": {
+              "P": "1",
+              "N": "2"
+            }
+          }
+        },
+        "passives": {
+          "c_dec_vcc_u1": {
+            "type": "capacitor",
+            "value": "100nF"
+          },
+          "c_bulk": {
+            "type": "capacitor",
+            "value": "10uF"
+          },
+          "c_ctrl": {
+            "type": "capacitor",
+            "value": "10nF"
+          },
+          "r_a": {
+            "type": "resistor",
+            "value": "47k"
+          },
+          "r_b": {
+            "type": "resistor",
+            "value": "47k"
+          },
+          "c_timing": {
+            "type": "capacitor",
+            "value": "100nF"
+          },
+          "r_led": {
+            "type": "resistor",
+            "value": "330"
+          }
+        },
+        "nets": {
+          "GND": [
+            "U1.GND",
+            "J_PWR.N",
+            "c_dec_vcc_u1.2",
+            "c_bulk.2",
+            "c_ctrl.2",
+            "c_timing.2",
+            "J_LED.N"
+          ],
+          "+5V": [
+            "U1.VCC",
+            "U1.RESET",
+            "J_PWR.P",
+            "c_dec_vcc_u1.1",
+            "c_bulk.1",
+            "r_a.1"
+          ],
+          "TRIG_THR": [
+            "U1.TRIG",
+            "U1.THR",
+            "r_b.1",
+            "c_timing.1"
+          ],
+          "DISCH": [
+            "U1.DISCH",
+            "r_a.2",
+            "r_b.2"
+          ],
+          "CTRL": [
+            "U1.CTRL",
+            "c_ctrl.1"
+          ],
+          "OUT": [
+            "U1.OUT",
+            "r_led.1"
+          ],
+          "LED_DRV": [
+            "r_led.2",
+            "J_LED.P"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 18.58,
+      "model_error": null
+    },
+    {
+      "case": "blinker10",
+      "trial": 2,
+      "validated": true,
+      "rounds": 1,
+      "validation_errors": [],
+      "structural_problems": [
+        "the request named '555'; the proposal has ['U1', 'J1', 'D1']"
+      ],
+      "simulated": false,
+      "refusal": "no single 555 timer in the proposal",
+      "clauses": [],
+      "correct": false,
+      "circuit": {
+        "devices": {
+          "U1": {
+            "pins": {
+              "GND": "1",
+              "TRIG": "2",
+              "OUT": "3",
+              "RESET": "4",
+              "CTRL": "5",
+              "THRES": "6",
+              "DISCH": "7",
+              "VCC": "8"
+            }
+          },
+          "J1": {
+            "kind": "connector",
+            "package": "JST_PH_2P",
+            "pins": {
+              "P": "1",
+              "N": "2"
+            }
+          },
+          "D1": {
+            "kind": "connector",
+            "package": "PinHeader_1x02_P2.54mm",
+            "pins": {
+              "A": "1",
+              "K": "2"
+            }
+          }
+        },
+        "passives": {
+          "c_dec_vcc_u1": {
+            "type": "capacitor",
+            "value": "100nF"
+          },
+          "c_bulk": {
+            "type": "capacitor",
+            "value": "10uF"
+          },
+          "c_ctrl": {
+            "type": "capacitor",
+            "value": "10nF"
+          },
+          "c_timing": {
+            "type": "capacitor",
+            "value": "10uF"
+          },
+          "r_ra": {
+            "type": "resistor",
+            "value": "1k"
+          },
+          "r_rb": {
+            "type": "resistor",
+            "value": "68k"
+          },
+          "r_led": {
+            "type": "resistor",
+            "value": "330"
+          }
+        },
+        "nets": {
+          "GND": [
+            "J1.N",
+            "U1.GND",
+            "c_dec_vcc_u1.2",
+            "c_bulk.2",
+            "c_ctrl.2",
+            "c_timing.2",
+            "D1.K"
+          ],
+          "+5V": [
+            "J1.P",
+            "U1.VCC",
+            "U1.RESET",
+            "c_dec_vcc_u1.1",
+            "c_bulk.1",
+            "r_ra.1"
+          ],
+          "NET_TRIG_THRES": [
+            "U1.TRIG",
+            "U1.THRES",
+            "c_timing.1",
+            "r_rb.1"
+          ],
+          "NET_DISCH": [
+            "U1.DISCH",
+            "r_ra.2",
+            "r_rb.2"
+          ],
+          "NET_CTRL": [
+            "U1.CTRL",
+            "c_ctrl.1"
+          ],
+          "NET_OUT": [
+            "U1.OUT",
+            "r_led.1"
+          ],
+          "NET_LED": [
+            "r_led.2",
+            "D1.A"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 2.55,
+      "model_error": null
+    },
+    {
+      "case": "halfrail",
+      "trial": 1,
+      "validated": true,
+      "rounds": 2,
+      "validation_errors": [
+        "net 'VIN': 'J_PWR' has no pin named '1' (known: ['P1', 'P2']...)",
+        "net 'GND': 'J_PWR' has no pin named '2' (known: ['P1', 'P2']...)",
+        "net 'GND': 'J_OUT' has no pin named '3' (known: ['P1', 'P2', 'P3']...)",
+        "net 'REF_BUF': 'J_OUT' has no pin named '2' (known: ['P1', 'P2', 'P3']...)",
+        "net 'RAIL_3V3': 'J_OUT' has no pin named '1' (known: ['P1', 'P2', 'P3']...)",
+        "net 'UNUSED_OUT' has 1 endpoint(s); a net joining fewer than 2 pins is not a connection"
+      ],
+      "structural_problems": [
+        "the request named 'TL072'; the proposal has ['U1', 'J_PWR', 'J_OUT']"
+      ],
+      "simulated": false,
+      "refusal": "no single op-amp in the proposal",
+      "clauses": [],
+      "correct": false,
+      "circuit": {
+        "devices": {
+          "U1": {
+            "pins": {
+              "OUT1": "1",
+              "IN1-": "2",
+              "IN1+": "3",
+              "GND": "4",
+              "IN2+": "5",
+              "IN2-": "6",
+              "OUT2": "7",
+              "VCC": "8"
+            }
+          },
+          "J_PWR": {
+            "kind": "connector",
+            "package": "JST_PH_2P",
+            "pins": {
+              "1": "1",
+              "2": "2"
+            }
+          },
+          "J_OUT": {
+            "kind": "connector",
+            "package": "PinHeader_1x03_P2.54mm",
+            "pins": {
+              "1": "1",
+              "2": "2",
+              "3": "3"
+            }
+          }
+        },
+        "passives": {
+          "r_div1": {
+            "type": "resistor",
+            "value": "10k"
+          },
+          "r_div2": {
+            "type": "resistor",
+            "value": "10k"
+          },
+          "r_term": {
+            "type": "resistor",
+            "value": "10k"
+          },
+          "c_dec": {
+            "type": "capacitor",
+            "value": "100nF"
+          },
+          "c_bulk": {
+            "type": "capacitor",
+            "value": "10uF"
+          }
+        },
+        "nets": {
+          "VIN": [
+            "J_PWR.1",
+            "c_bulk.1",
+            "c_dec.1",
+            "U1.VCC"
+          ],
+          "GND": [
+            "J_PWR.2",
+            "c_bulk.2",
+            "c_dec.2",
+            "U1.GND",
+            "r_div2.2",
+            "J_OUT.3",
+            "r_term.2"
+          ],
+          "REF_DIV": [
+            "r_div1.2",
+            "r_div2.1",
+            "U1.IN1+"
+          ],
+          "REF_BUF": [
+            "U1.OUT1",
+            "U1.IN1-",
+            "J_OUT.2"
+          ],
+          "RAIL_3V3": [
+            "r_div1.1",
+            "J_OUT.1"
+          ],
+          "UNUSED_IN": [
+            "U1.IN2+",
+            "r_term.1"
+          ],
+          "UNUSED_FB": [
+            "U1.IN2-",
+            "U1.OUT2"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 4.14,
+      "model_error": null
+    },
+    {
+      "case": "halfrail",
+      "trial": 2,
+      "validated": true,
+      "rounds": 2,
+      "validation_errors": [
+        "net '+3V3' has 1 endpoint(s); a net joining fewer than 2 pins is not a connection"
+      ],
+      "structural_problems": [
+        "the request named 'TL072'; the proposal has ['U1', 'J_PWR', 'J_OUT']"
+      ],
+      "simulated": false,
+      "refusal": "no single op-amp in the proposal",
+      "clauses": [],
+      "correct": false,
+      "circuit": {
+        "devices": {
+          "U1": {
+            "pins": {
+              "OUT1": "1",
+              "IN1-": "2",
+              "IN1+": "3",
+              "GND": "4",
+              "IN2+": "5",
+              "IN2-": "6",
+              "OUT2": "7",
+              "VCC": "8"
+            }
+          },
+          "J_PWR": {
+            "kind": "connector",
+            "package": "JST_PH_2P",
+            "pins": {
+              "1": "1",
+              "2": "2"
+            }
+          },
+          "J_OUT": {
+            "kind": "connector",
+            "package": "PinHeader_1x03_P2.54mm",
+            "pins": {
+              "1": "1",
+              "2": "2",
+              "3": "3"
+            }
+          }
+        },
+        "passives": {
+          "R_DIV1": {
+            "type": "resistor",
+            "value": "10k"
+          },
+          "R_DIV2": {
+            "type": "resistor",
+            "value": "10k"
+          },
+          "R_FB": {
+            "type": "resistor",
+            "value": "0"
+          },
+          "R_UNUSEDin": {
+            "type": "resistor",
+            "value": "10k"
+          },
+          "C_DEC": {
+            "type": "capacitor",
+            "value": "100nF"
+          },
+          "C_BULK": {
+            "type": "capacitor",
+            "value": "10uF"
+          }
+        },
+        "nets": {
+          "VIN": [
+            "J_PWR.1",
+            "C_BULK.1",
+            "C_DEC.1",
+            "U1.VCC",
+            "R_DIV1.1",
+            "J_OUT.1"
+          ],
+          "GND": [
+            "J_PWR.2",
+            "C_BULK.2",
+            "C_DEC.2",
+            "U1.GND",
+            "R_DIV2.2",
+            "J_OUT.3",
+            "R_UNUSEDin.2"
+          ],
+          "REF_DIV": [
+            "R_DIV1.2",
+            "R_DIV2.1",
+            "U1.IN1+"
+          ],
+          "REF_BUF": [
+            "U1.OUT1",
+            "U1.IN1-",
+            "R_FB.1"
+          ],
+          "HALF_RAIL_OUT": [
+            "R_FB.2",
+            "J_OUT.2"
+          ],
+          "UNUSED_IN": [
+            "U1.IN2+",
+            "R_UNUSEDin.1"
+          ],
+          "UNUSED_FB": [
+            "U1.IN2-",
+            "U1.OUT2"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 4.31,
+      "model_error": null
+    }
+  ]
+}

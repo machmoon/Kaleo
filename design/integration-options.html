@@ -1,0 +1,538 @@
+<title>Silkscreen Integration Plans</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chivo:ital,wght@0,300;0,400;0,600;0,800;1,400&family=Chivo+Mono:wght@400;600&display=swap">
+
+<style>
+  /* KiCad's own layer palette — schematic paper over board well.
+     Light ground = KiCad schematic (#F5F4EF), dark ground = board canvas (#001023). */
+  :root {
+    --paper:      #F5F4EF;
+    --surface:    #FFFEFA;
+    --surface-2:  #EDEBE2;
+    --ink:        #16191C;
+    --ink-soft:   #5A6068;
+    --ink-faint:  #8A9099;
+    --rule:       #D6D3C7;
+    --rule-soft:  #E4E1D6;
+
+    --cu-f:       #B22D2D;   /* F.Cu  — accent */
+    --cu-b:       #3F6BAF;   /* B.Cu  — secondary */
+    --silk:       #8A7A1E;   /* silkscreen, darkened for light ground */
+    --court:      #C41BA8;   /* courtyard */
+    --green:      #46703A;   /* KiCad symbol green */
+
+    --ok:         #46703A;
+    --partial:    #8A7A1E;
+    --none:       #B22D2D;
+
+    --shadow: 0 1px 2px rgba(20,24,28,.06), 0 8px 24px rgba(20,24,28,.05);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:     #001023;
+      --surface:   #04192F;
+      --surface-2: #082444;
+      --ink:       #E4EDF7;
+      --ink-soft:  #93A8C0;
+      --ink-faint: #647E9B;
+      --rule:      #123458;
+      --rule-soft: #0C2743;
+
+      --cu-f:      #E15C5C;
+      --cu-b:      #6FA0DE;
+      --silk:      #F2EDA1;
+      --court:     #FF6BE4;
+      --green:     #7FBF6A;
+
+      --ok:        #7FBF6A;
+      --partial:   #F2EDA1;
+      --none:      #E15C5C;
+
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:     #001023;
+    --surface:   #04192F;
+    --surface-2: #082444;
+    --ink:       #E4EDF7;
+    --ink-soft:  #93A8C0;
+    --ink-faint: #647E9B;
+    --rule:      #123458;
+    --rule-soft: #0C2743;
+
+    --cu-f:      #E15C5C;
+    --cu-b:      #6FA0DE;
+    --silk:      #F2EDA1;
+    --court:     #FF6BE4;
+    --green:     #7FBF6A;
+
+    --ok:        #7FBF6A;
+    --partial:   #F2EDA1;
+    --none:      #E15C5C;
+
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Chivo", ui-sans-serif, system-ui, -apple-system, "Helvetica Neue", sans-serif;
+    font-size: 16.5px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 61rem;
+    margin: 0 auto;
+    padding: clamp(2rem, 5vw, 4.5rem) clamp(1.15rem, 4vw, 2.5rem) 6rem;
+    display: flex;
+    flex-direction: column;
+    gap: clamp(2.75rem, 5vw, 4rem);
+  }
+
+  /* ---------- masthead ---------- */
+
+  header { display: flex; flex-direction: column; gap: 1.1rem; }
+
+  .eyebrow {
+    font-family: "Chivo Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .715rem;
+    letter-spacing: .17em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    display: flex;
+    flex-wrap: wrap;
+    gap: .55rem .9rem;
+    align-items: center;
+  }
+  .eyebrow .dot { color: var(--rule); }
+
+  h1 {
+    font-size: clamp(2.1rem, 5.4vw, 3.25rem);
+    line-height: 1.04;
+    font-weight: 800;
+    letter-spacing: -.023em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .standfirst {
+    font-size: clamp(1.02rem, 2vw, 1.16rem);
+    color: var(--ink-soft);
+    max-width: 44ch;
+    margin: 0;
+  }
+
+  /* the copper rule — F.Cu over B.Cu, KiCad's two-layer stack */
+  .stackrule { display: flex; height: 3px; width: 100%; }
+  .stackrule i { display: block; height: 100%; }
+  .stackrule i:nth-child(1) { background: var(--cu-f); flex: 0 0 22%; }
+  .stackrule i:nth-child(2) { background: var(--cu-b); flex: 0 0 13%; }
+  .stackrule i:nth-child(3) { background: var(--rule); flex: 1; }
+
+  /* ---------- section furniture ---------- */
+
+  section { display: flex; flex-direction: column; gap: 1.35rem; }
+
+  h2 {
+    font-size: 1.42rem;
+    font-weight: 800;
+    letter-spacing: -.014em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .sectlabel {
+    font-family: "Chivo Mono", ui-monospace, monospace;
+    font-size: .7rem;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--cu-f);
+    margin: 0;
+  }
+
+  p { margin: 0; max-width: 68ch; }
+  .lede { color: var(--ink-soft); }
+
+  strong { font-weight: 600; }
+
+  code {
+    font-family: "Chivo Mono", ui-monospace, monospace;
+    font-size: .875em;
+    background: var(--surface-2);
+    padding: .1em .38em;
+    border-radius: 2px;
+  }
+
+  /* ---------- status strip ---------- */
+
+  .status {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 1px;
+    background: var(--rule-soft);
+    border: 1px solid var(--rule-soft);
+    overflow: hidden;
+  }
+  .stat {
+    background: var(--surface);
+    padding: 1rem 1.05rem 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: .3rem;
+  }
+  .stat .k {
+    font-family: "Chivo Mono", ui-monospace, monospace;
+    font-size: .67rem;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  .stat .v {
+    font-size: 1.62rem;
+    font-weight: 800;
+    letter-spacing: -.02em;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+  }
+  .stat .n { font-size: .84rem; color: var(--ink-soft); line-height: 1.4; }
+  .v.ok { color: var(--ok); }
+  .v.none { color: var(--none); }
+
+  /* ---------- decided panel ---------- */
+
+  .decided {
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--green);
+    background: var(--surface);
+    padding: 1.3rem 1.4rem;
+    display: flex;
+    flex-direction: column;
+    gap: .7rem;
+  }
+  .decided .tag {
+    font-family: "Chivo Mono", ui-monospace, monospace;
+    font-size: .68rem;
+    letter-spacing: .15em;
+    text-transform: uppercase;
+    color: var(--green);
+  }
+
+  /* ---------- table ---------- */
+
+  .tablewrap { overflow-x: auto; border: 1px solid var(--rule); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; min-width: 34rem; }
+  th, td {
+    text-align: left;
+    padding: .72rem .95rem;
+    border-bottom: 1px solid var(--rule-soft);
+    font-size: .93rem;
+    vertical-align: top;
+  }
+  thead th {
+    font-family: "Chivo Mono", ui-monospace, monospace;
+    font-size: .68rem;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 400;
+    background: var(--surface-2);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.yes { color: var(--ok); font-weight: 600; }
+  td.no  { color: var(--none); font-weight: 600; }
+
+  /* ---------- options ---------- */
+
+  .options { display: flex; flex-direction: column; gap: 1.1rem; }
+
+  .opt {
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    display: grid;
+    grid-template-columns: 3.4rem 1fr;
+  }
+  .opt .spine {
+    background: var(--surface-2);
+    border-right: 1px solid var(--rule-soft);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 1.25rem;
+  }
+  .opt .spine span {
+    font-family: "Chivo Mono", ui-monospace, monospace;
+    font-size: .78rem;
+    font-weight: 600;
+    color: var(--ink-faint);
+  }
+  .opt .body { padding: 1.2rem 1.35rem 1.35rem; display: flex; flex-direction: column; gap: .8rem; }
+
+  .opt h3 {
+    margin: 0;
+    font-size: 1.12rem;
+    font-weight: 700;
+    letter-spacing: -.01em;
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: .6rem;
+  }
+  .opt h3 .file {
+    font-family: "Chivo Mono", ui-monospace, monospace;
+    font-size: .72rem;
+    font-weight: 400;
+    color: var(--ink-faint);
+    letter-spacing: 0;
+  }
+
+  .chips { display: flex; flex-wrap: wrap; gap: .4rem; }
+  .chip {
+    font-family: "Chivo Mono", ui-monospace, monospace;
+    font-size: .665rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    padding: .2rem .5rem;
+    border: 1px solid currentColor;
+    border-radius: 2px;
+    line-height: 1.5;
+  }
+  .chip.build   { color: var(--cu-b); }
+  .chip.risk-hi { color: var(--none); }
+  .chip.risk-md { color: var(--partial); }
+  .chip.risk-lo { color: var(--ok); }
+  .chip.owner   { color: var(--court); }
+
+  .tradeoff { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: .75rem 1.6rem; }
+  .tradeoff div { display: flex; flex-direction: column; gap: .25rem; }
+  .tradeoff .h {
+    font-family: "Chivo Mono", ui-monospace, monospace;
+    font-size: .655rem;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  .tradeoff p { font-size: .91rem; color: var(--ink-soft); }
+
+  .rec {
+    border-top: 1px solid var(--rule-soft);
+    padding-top: .8rem;
+    font-size: .92rem;
+  }
+  .rec b { color: var(--ink); }
+
+  /* ---------- call ---------- */
+
+  .call {
+    border: 1px solid var(--cu-f);
+    background: var(--surface);
+    padding: 1.4rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: .85rem;
+  }
+  .call h2 { font-size: 1.2rem; }
+  ol.asks { margin: 0; padding-left: 1.15rem; display: flex; flex-direction: column; gap: .5rem; }
+  ol.asks li { font-size: .95rem; }
+  ol.asks li::marker { font-family: "Chivo Mono", ui-monospace, monospace; color: var(--cu-f); font-weight: 600; }
+
+  footer {
+    font-family: "Chivo Mono", ui-monospace, monospace;
+    font-size: .72rem;
+    color: var(--ink-faint);
+    letter-spacing: .04em;
+    border-top: 1px solid var(--rule-soft);
+    padding-top: 1.1rem;
+    line-height: 1.7;
+  }
+
+  @media (max-width: 34rem) {
+    .opt { grid-template-columns: 1fr; }
+    .opt .spine {
+      border-right: 0;
+      border-bottom: 1px solid var(--rule-soft);
+      justify-content: flex-start;
+      padding: .5rem 1.35rem;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">
+      <span>Silkscreen</span><span class="dot">/</span>
+      <span>Integration options</span><span class="dot">/</span>
+      <span>Decision needed before Aug 31</span>
+    </div>
+    <h1>Which surface do we build?</h1>
+    <p class="standfirst">The engine is done. The UI is mockups. We have two days and three
+      people, and only one of these three options actually fits in that.</p>
+    <div class="stackrule"><i></i><i></i><i></i></div>
+  </header>
+
+  <section>
+    <div class="status">
+      <div class="stat">
+        <span class="k">Engine</span>
+        <span class="v ok">183</span>
+        <span class="n">tests, all passing — no network, no API key, no KiCad install</span>
+      </div>
+      <div class="stat">
+        <span class="k">UI shipped</span>
+        <span class="v none">0</span>
+        <span class="n">five artboards in <code>design/</code>, none wired to the engine</span>
+      </div>
+      <div class="stat">
+        <span class="k">Days left</span>
+        <span class="v">2</span>
+        <span class="n">Aug 29 → Aug 31</span>
+      </div>
+      <div class="stat">
+        <span class="k">People</span>
+        <span class="v">3</span>
+        <span class="n">Patrick · James · Ty</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <p class="sectlabel">Settled — not reopening this</p>
+    <h2>The board file is the API</h2>
+    <div class="decided">
+      <span class="tag">Decided</span>
+      <p>Most AI-and-KiCad tools are plugins: they live inside KiCad's Python environment
+        and drive the IPC API, so they need KiCad running, a supported KiCad version, and a
+        platform its plugin loader is happy on. We went the other way and parse the same
+        S-expression format KiCad does. This is the thing that makes the demo survive a
+        second user, and it's already built.</p>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>&nbsp;</th><th>Plugin / IPC</th><th>Silkscreen</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Requires KiCad installed</td><td class="no">Yes</td><td class="yes">No</td></tr>
+            <tr><td>Requires KiCad running</td><td class="no">Yes</td><td class="yes">No</td></tr>
+            <tr><td>Headless / CI</td><td class="no">Hard</td><td class="yes">Native</td></tr>
+            <tr><td>Platform lock</td><td class="no">Plugin loader</td><td class="yes">None — pure Python</td></tr>
+            <tr><td>Testable without KiCad</td><td class="no">No</td><td class="yes">Yes, all 143</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="font-size:.9rem;color:var(--ink-soft)">Everything below is about what sits
+        <em>on top</em> of that, not whether to replace it.</p>
+    </div>
+  </section>
+
+  <section>
+    <p class="sectlabel">Open — pick one</p>
+    <h2>Three ways to put a face on it</h2>
+    <p class="lede">Ordered by how much has to be true for the demo to work. Each one already
+      has an artboard, so the visual direction is not the unknown — the wiring is.</p>
+
+    <div class="options">
+
+      <article class="opt">
+        <div class="spine"><span>A</span></div>
+        <div class="body">
+          <h3>Review-only web view <span class="file">Review.dc.html</span></h3>
+          <div class="chips">
+            <span class="chip build">~4h build</span>
+            <span class="chip risk-lo">Low risk</span>
+            <span class="chip owner">James</span>
+          </div>
+          <p>Paste a description, get back the findings list — blocker / marginal / note,
+            each citing a datasheet page. No board canvas, no editing. A results page over
+            the existing <code>POST /generate</code>.</p>
+          <div class="tradeoff">
+            <div><span class="h">For</span><p>It is the actual wedge. The DEVPOST argues semantic review is the underserved job, and this shows exactly that with nothing else in the way.</p></div>
+            <div><span class="h">Against</span><p>Least visually impressive. No board, no motion, no "wow" frame for the video.</p></div>
+          </div>
+          <p class="rec"><b>Fits in two days with room to spare.</b> The endpoint already returns
+            everything this needs.</p>
+        </div>
+      </article>
+
+      <article class="opt">
+        <div class="spine"><span>B</span></div>
+        <div class="body">
+          <h3>Schematic + board viewer <span class="file">Main · Board.dc.html</span></h3>
+          <div class="chips">
+            <span class="chip build">~1.5 days</span>
+            <span class="chip risk-md">Medium risk</span>
+            <span class="chip owner">James + Ty</span>
+          </div>
+          <p>The Drafting Table app: KiCad's <code>#F5F4EF</code> schematic paper, with the
+            placed board as an inset dark well showing real footprint positions from the
+            solver, plus the review panel alongside.</p>
+          <div class="tradeoff">
+            <div><span class="h">For</span><p>Shows the whole pipeline in one frame — intent to placed board to cited review. Best single screenshot we can put on the submission.</p></div>
+            <div><span class="h">Against</span><p>Needs a real renderer for footprints, pads, and courtyards from the <code>.kicad_pcb</code>. That is the part nobody has started, and it is where the two days go.</p></div>
+          </div>
+          <p class="rec"><b>Doable only if the board render is scoped to rectangles + pads.</b>
+            No silkscreen art, no zones, no ratsnest. Courtyard outlines in
+            <code>#FF26E2</code> and pads in <code>#C83434</code> read as a PCB well enough.</p>
+        </div>
+      </article>
+
+      <article class="opt">
+        <div class="spine"><span>C</span></div>
+        <div class="body">
+          <h3>Overlay assistant + guided cursor <span class="file">Overlay · Teach.dc.html</span></h3>
+          <div class="chips">
+            <span class="chip build">3+ days</span>
+            <span class="chip risk-hi">High risk</span>
+            <span class="chip owner">—</span>
+          </div>
+          <p>The floating Slew Rate assistant that sits over the user's real KiCad window and
+            drives a ghost cursor to teach a control.</p>
+          <div class="tradeoff">
+            <div><span class="h">For</span><p>The most distinctive idea in the mockups, and the mascot and motion language are already designed.</p></div>
+            <div><span class="h">Against</span><p>It needs to see and point at another app's window — screen capture, coordinate mapping, per-OS permissions. It is also the closest thing to the mouse-automation approach the DEVPOST explicitly disowns.</p></div>
+          </div>
+          <p class="rec"><b>Recommend cutting for this deadline.</b> It is the one that can
+            fail on the judges' machine in a way we cannot debug live.</p>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <section class="call">
+    <h2>What I think we do</h2>
+    <p><strong>Build A, then B if A lands early.</strong> A is the argument the submission
+      actually makes and it cannot fail on stage. B is the screenshot. C is a
+      post-hackathon project.</p>
+    <ol class="asks">
+      <li><strong>James</strong> — start on A. It is pure frontend over an existing
+        endpoint, so no PCB knowledge needed anywhere in it.</li>
+      <li><strong>Ty</strong> — demo video and DEVPOST writeup, plus a clean-machine install
+        from the README. If the install instructions are wrong, nothing else matters.</li>
+      <li><strong>Patrick</strong> — engine side, and the board render for B if A lands.</li>
+    </ol>
+    <p style="font-size:.9rem;color:var(--ink-soft)">Disagree on any of it in the group chat
+      — this is a proposal, not a decision.</p>
+  </section>
+
+  <footer>
+    Silkscreen · integration options · drafted 29 Aug 2026<br>
+    Status figures measured from the repo, not quoted: 183 tests collected, 183 passing,
+    3m04s on a quiet tree. Five artboards in <code>design/</code>, none wired to the engine.
+  </footer>
+
+</div>

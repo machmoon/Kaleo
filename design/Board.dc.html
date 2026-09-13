@@ -1,0 +1,157 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chivo:wght@300;400;500;600;700&family=Chivo+Mono:wght@400;500;600&display=swap">
+  <style>
+    body { margin:0; font-family:"Chivo","Helvetica Neue",Arial,sans-serif; }
+    a { color:#000084; } a:hover { color:#840000; }
+    .lbl { font-family:"Chivo Mono",ui-monospace,monospace; font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:#7C796E; }
+    .mono { font-family:"Chivo Mono",ui-monospace,monospace; font-variant-numeric:tabular-nums; }
+  </style>
+</helmet>
+
+<div style="width:1440px; height:900px; display:flex; flex-direction:column; background:#F5F4EF; color:#14130F; overflow:hidden;">
+
+  <div style="height:44px; display:flex; align-items:center; border-bottom:1px solid #B5B5B5; background:#FCFBF8; flex-shrink:0;">
+    <div style="display:flex; align-items:center; gap:9px; padding:0 16px; border-right:1px solid #D6D3C8; height:100%;">
+      <svg width="17" height="17" viewBox="0 0 512 512"><rect x="32" y="32" width="448" height="448" rx="110" fill="#1E6A48"/><g fill="none" stroke="#D68C42" stroke-width="44" stroke-linejoin="round"><path d="M164.5 124.5 V386.5"/><path d="M349.5 124.5 L164.5 256 L359.5 386.5"/></g><g fill="#D68C42"><circle cx="164.5" cy="124.5" r="38.5"/><circle cx="164.5" cy="386.5" r="38.5"/><circle cx="349.5" cy="124.5" r="38.5"/><circle cx="359.5" cy="386.5" r="38.5"/></g><g fill="#1E6A48"><circle cx="164.5" cy="124.5" r="17.5"/><circle cx="164.5" cy="386.5" r="17.5"/><circle cx="349.5" cy="124.5" r="17.5"/><circle cx="359.5" cy="386.5" r="17.5"/></g></svg>
+      <span style="font-weight:600; font-size:14px; letter-spacing:-.01em;">Kaleo</span>
+    </div>
+    <span style="font-size:12.5px; color:#484848; padding:0 12px;">stepper-driver-v2</span>
+    <div style="flex-grow:1;"></div>
+    <div style="display:flex; align-items:center; gap:8px; padding:0 14px; border-left:1px solid #D6D3C8; height:100%;">
+      <span style="width:6px; height:6px; border-radius:50%; background:#009600;"></span><span class="lbl">placed 11/11</span>
+    </div>
+  </div>
+
+  <div style="flex-grow:1; display:flex; min-height:0;">
+
+    <!-- left: layer manager -->
+    <div style="width:230px; border-right:1px solid #D6D3C8; background:#FAF9F5; flex-shrink:0; padding:12px 0;">
+      <div class="lbl" style="padding:0 14px 9px;">Layers</div>
+      <div style="display:flex; flex-direction:column;">
+        <div style="display:flex; align-items:center; gap:10px; padding:5px 14px; background:#EDEBE3;"><span style="width:13px;height:13px;background:#C83434;border:1px solid #14130F;"></span><span class="mono" style="font-size:11.5px; flex-grow:1;">F.Cu</span><span class="lbl" style="font-size:9px;">11</span></div>
+        <div style="display:flex; align-items:center; gap:10px; padding:5px 14px;"><span style="width:13px;height:13px;background:#4D7FC4;border:1px solid #14130F;"></span><span class="mono" style="font-size:11.5px; flex-grow:1;">B.Cu</span><span class="lbl" style="font-size:9px;">0</span></div>
+        <div style="display:flex; align-items:center; gap:10px; padding:5px 14px;"><span style="width:13px;height:13px;background:#F2EDA1;border:1px solid #14130F;"></span><span class="mono" style="font-size:11.5px; flex-grow:1;">F.SilkS</span></div>
+        <div style="display:flex; align-items:center; gap:10px; padding:5px 14px;"><span style="width:13px;height:13px;background:#FF26E2;border:1px solid #14130F;"></span><span class="mono" style="font-size:11.5px; flex-grow:1;">F.CrtYd</span></div>
+        <div style="display:flex; align-items:center; gap:10px; padding:5px 14px;"><span style="width:13px;height:13px;background:#D0D2CD;border:1px solid #14130F;"></span><span class="mono" style="font-size:11.5px; flex-grow:1;">Edge.Cuts</span></div>
+        <div style="display:flex; align-items:center; gap:10px; padding:5px 14px;"><span style="width:13px;height:13px;background:#00F8FF;border:1px solid #14130F; opacity:.6;"></span><span class="mono" style="font-size:11.5px; flex-grow:1;">Ratsnest</span></div>
+      </div>
+
+      <div class="lbl" style="padding:20px 14px 9px; border-top:1px solid #D6D3C8; margin-top:14px;">Solve</div>
+      <div style="padding:0 14px; display:flex; flex-direction:column; gap:8px;">
+        <div style="display:flex; justify-content:space-between;"><span class="lbl">Status</span><span class="mono" style="font-size:11px; color:#D19200;">feasible</span></div>
+        <div style="display:flex; justify-content:space-between;"><span class="lbl">Board</span><span class="mono" style="font-size:11px;">19.60 &times; 15.05</span></div>
+        <div style="display:flex; justify-content:space-between;"><span class="lbl">HPWL</span><span class="mono" style="font-size:11px;">52.4 mm</span></div>
+        <div style="display:flex; justify-content:space-between;"><span class="lbl">Clearance</span><span class="mono" style="font-size:11px;">0.25 mm</span></div>
+        <div style="display:flex; justify-content:space-between;"><span class="lbl">Time</span><span class="mono" style="font-size:11px;">20.0 s</span></div>
+      </div>
+    </div>
+
+    <!-- centre: the dark board well -->
+    <div style="flex-grow:1; padding:20px; display:flex; min-width:0;">
+      <div style="flex-grow:1; background:#001023; border:1px solid #6E6B62; position:relative; overflow:hidden; box-shadow:inset 0 1px 6px rgba(0,0,0,.5);">
+
+        <div style="position:absolute; top:12px; left:16px; font-family:'Chivo Mono',monospace; font-size:10px; letter-spacing:.09em; text-transform:uppercase; color:#5B7291;">Board &middot; F.Cu</div>
+
+        <svg width="100%" height="100%" viewBox="0 0 700 600" style="display:block;">
+          <defs><pattern id="dots" width="14" height="14" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="#848484" opacity=".22"/></pattern></defs>
+          <rect width="700" height="600" fill="url(#dots)"/>
+
+          <!-- edge cuts -->
+          <rect x="150" y="120" width="400" height="330" fill="none" stroke="#D0D2CD" stroke-width="2"/>
+
+          <!-- ratsnest -->
+          <g stroke="#00F8FF" stroke-width="1" opacity=".35" stroke-dasharray="4 4">
+            <path d="M320 210 L250 300"/><path d="M320 210 L420 260"/><path d="M420 260 L470 350"/>
+            <path d="M250 300 L215 380"/><path d="M320 210 L290 165"/>
+          </g>
+
+          <!-- footprints: courtyard magenta + copper pads -->
+          <!-- U1 -->
+          <rect x="272" y="162" width="96" height="96" fill="none" stroke="#FF26E2" stroke-width="1"/>
+          <rect x="280" y="170" width="80" height="80" fill="#C83434" opacity=".22" stroke="#C83434" stroke-width="1.4"/>
+          <text x="320" y="215" text-anchor="middle" font-family="Chivo Mono, monospace" font-size="11" fill="#F2EDA1">U1</text>
+          <g fill="#C83434">
+            <rect x="276" y="182" width="7" height="3"/><rect x="276" y="192" width="7" height="3"/><rect x="276" y="202" width="7" height="3"/><rect x="276" y="212" width="7" height="3"/>
+            <rect x="357" y="182" width="7" height="3"/><rect x="357" y="192" width="7" height="3"/><rect x="357" y="202" width="7" height="3"/><rect x="357" y="212" width="7" height="3"/>
+          </g>
+          <!-- U2 -->
+          <rect x="392" y="232" width="58" height="52" fill="none" stroke="#FF26E2" stroke-width="1"/>
+          <rect x="399" y="239" width="44" height="38" fill="#C83434" opacity=".22" stroke="#C83434" stroke-width="1.4"/>
+          <text x="421" y="262" text-anchor="middle" font-family="Chivo Mono, monospace" font-size="10" fill="#F2EDA1">U2</text>
+          <!-- U3 -->
+          <rect x="218" y="272" width="66" height="56" fill="none" stroke="#FF26E2" stroke-width="1"/>
+          <rect x="225" y="279" width="52" height="42" fill="#C83434" opacity=".22" stroke="#C83434" stroke-width="1.4"/>
+          <text x="251" y="304" text-anchor="middle" font-family="Chivo Mono, monospace" font-size="10" fill="#F2EDA1">U3</text>
+
+          <!-- passives -->
+          <g>
+            <rect x="290" y="150" width="16" height="9" fill="#C83434" opacity=".45" stroke="#C83434" stroke-width="1"/><text x="298" y="146" text-anchor="middle" font-family="Chivo Mono, monospace" font-size="7.5" fill="#F2EDA1">C1</text>
+            <rect x="204" y="372" width="16" height="9" fill="#C83434" opacity=".45" stroke="#C83434" stroke-width="1"/><text x="212" y="368" text-anchor="middle" font-family="Chivo Mono, monospace" font-size="7.5" fill="#F2EDA1">C3</text>
+            <rect x="462" y="342" width="16" height="9" fill="#C83434" opacity=".45" stroke="#C83434" stroke-width="1"/><text x="470" y="338" text-anchor="middle" font-family="Chivo Mono, monospace" font-size="7.5" fill="#F2EDA1">C5</text>
+            <rect x="240" y="342" width="16" height="9" fill="#C83434" opacity=".45" stroke="#C83434" stroke-width="1"/><text x="248" y="338" text-anchor="middle" font-family="Chivo Mono, monospace" font-size="7.5" fill="#F2EDA1">C4</text>
+            <rect x="376" y="176" width="16" height="9" fill="#C83434" opacity=".45" stroke="#C83434" stroke-width="1"/><text x="384" y="172" text-anchor="middle" font-family="Chivo Mono, monospace" font-size="7.5" fill="#F2EDA1">C2</text>
+            <rect x="332" y="290" width="16" height="9" fill="#C83434" opacity=".45" stroke="#C83434" stroke-width="1"/><text x="340" y="286" text-anchor="middle" font-family="Chivo Mono, monospace" font-size="7.5" fill="#F2EDA1">C7</text>
+          </g>
+
+          <!-- dimension annotation, silkscreen yellow -->
+          <g stroke="#F2EDA1" stroke-width=".8" opacity=".75">
+            <path d="M150 470 H550"/><path d="M150 464 v12"/><path d="M550 464 v12"/>
+          </g>
+          <text x="350" y="486" text-anchor="middle" font-family="Chivo Mono, monospace" font-size="9.5" fill="#F2EDA1" opacity=".85">19.60 mm</text>
+          <g stroke="#F2EDA1" stroke-width=".8" opacity=".75">
+            <path d="M576 120 V450"/><path d="M570 120 h12"/><path d="M570 450 h12"/>
+          </g>
+          <text x="597" y="290" font-family="Chivo Mono, monospace" font-size="9.5" fill="#F2EDA1" opacity=".85">15.05</text>
+        </svg>
+      </div>
+    </div>
+
+    <!-- right: placement decisions -->
+    <div style="width:308px; border-left:1px solid #D6D3C8; background:#FAF9F5; flex-shrink:0;">
+      <div style="padding:12px 16px 10px; border-bottom:1px solid #D6D3C8;">
+        <div class="lbl">Why it placed this way</div>
+      </div>
+      <div style="padding:14px 16px; display:flex; flex-direction:column; gap:14px;">
+
+        <div style="border-left:2px solid #009600; padding-left:11px;">
+          <div style="font-size:12.5px; font-weight:600; margin-bottom:3px;">C7 next to U1 pin 48</div>
+          <div style="font-size:11.5px; color:#484848; line-height:1.5;">Decoupling caps are weighted on their power nets, so C7 is pulled to the V<sub>DD</sub> pin it bypasses &mdash; 1.2 mm away.</div>
+        </div>
+
+        <div style="border-left:2px solid #009600; padding-left:11px;">
+          <div style="font-size:12.5px; font-weight:600; margin-bottom:3px;">U3 on the left edge</div>
+          <div style="font-size:11.5px; color:#484848; line-height:1.5;">Marked <span class="mono" style="font-size:10.5px;">must_be_on_edge</span> for thermal access to the board perimeter.</div>
+        </div>
+
+        <div style="border-left:2px solid #D19200; padding-left:11px;">
+          <div style="font-size:12.5px; font-weight:600; margin-bottom:3px;">Not proven optimal</div>
+          <div style="font-size:11.5px; color:#484848; line-height:1.5;">Hit the 20 s limit at a feasible solution. Best bound is 8% below the current objective &mdash; more time may improve it.</div>
+        </div>
+
+        <div style="border-top:1px solid #D6D3C8; padding-top:13px;">
+          <div class="lbl" style="margin-bottom:8px;">Unmodelled</div>
+          <div style="font-size:11.5px; color:#7C796E; line-height:1.6;">Two-sided placement, thermal relief, differential pairs, and connector facing are not considered.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="height:28px; border-top:1px solid #B5B5B5; background:#EDEBE3; display:flex; align-items:center; flex-shrink:0;">
+    <span class="lbl" style="padding:0 14px; border-right:1px solid #D6D3C8; color:#A9A69A;">Schematic</span>
+    <span class="lbl" style="padding:0 14px; border-right:1px solid #D6D3C8; color:#14130F;">Board</span>
+    <span class="lbl" style="padding:0 14px; border-right:1px solid #D6D3C8; color:#A9A69A;">Review &middot; 4</span>
+    <div style="flex-grow:1;"></div>
+    <span class="mono" style="font-size:10px; color:#7C796E; padding:0 16px 0 0;">grid 0.05 mm</span>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

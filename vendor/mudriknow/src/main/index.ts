@@ -1,0 +1,899 @@
+﻿import { app, BrowserWindow, screen, dialog, nativeTheme, powerMonitor } from "electron";
+import * as path from "path";
+import * as fs from "fs";
+import * as os from "os";
+import { pathToFileURL } from "url";
+import * as koffi from "koffi";
+import { execFileSync } from "child_process";
+import { createTrayWithShow, destroyTray } from "./tray";
+import { Config, DEFAULT_CONFIG, ContextPayload, IPC } from "../shared/types";
+import { registerIpcHandlers, setContext, setAreaContext, getLastContext, patchConfigPersistOnly, attachAutoScreenshot, setScreenshotMode } from "./ipc-handlers";
+import { startHotkeyListener, stopHotkeyListener, applyHotkeys } from "./hotkey";
+import { loadConfig, saveConfig, isFirstRun, ensureAgentInWorkingDir } from "./config-store";
+import { setToastAppId } from "./notifier";
+import { initUpdater, stopUpdater } from "./updater";
+import { readContextAtPoint } from "./context-reader";
+import { startAreaSelection } from "./area-selector";
+import { scanArea } from "./area-scanner";
+import { showElementHighlight, showAreaHighlight } from "./highlight";
+import { cleanupImage, captureAndOptimize } from "./vision";
+import { log, pruneOldLogs } from "./logger";
+
+app.commandLine.appendSwitch("enable-features", "BackDropFilter");
+
+import { showSplashScreen, closeSplashScreen } from "./splash/splash-window";
+import { startCaptureShimmer, finishCaptureShimmer, cancelCaptureShimmer, freezeCaptureShimmerForShot } from "./guide/guide-overlay";
+
+const gotTheLock = app.requestSingleInstanceLock();
+// Set the AppUserModelID early so modern Windows toasts (response-ready
+// notifications) carry the right app identity + icon. Must run before any
+// Notification is created.
+setToastAppId();
+if (!gotTheLock) {
+  app.quit();
+} else {
+  let instanceDialogOpen = false;
+  app.on("second-instance", () => {
+    if (instanceDialogOpen) return;
+    instanceDialogOpen = true;
+    log("Second instance attempted — asking whether to close the running one");
+    const choice = dialog.showMessageBoxSync({
+      type: "info",
+      title: "MudrikNow",
+      message:
+        "MudrikNow is already running in the background. Use Alt+Space, Ctrl+Space, Alt+X, or the tray icon to open it. Do you want to close the running instance first?",
+      buttons: ["OK", "Close"],
+      defaultId: 1,
+      cancelId: 1,
+    });
+    instanceDialogOpen = false;
+    if (choice === 0) {
+      app.quit();
+    }
+  });
+}
+
+let mainWindow: BrowserWindow | null = null;
+let config: Config = { ...DEFAULT_CONFIG };
+let splashShownForThisLaunch = false;
+
+const dwmapi = koffi.load("dwmapi.dll");
+const DwmSetWindowAttribute = dwmapi.func(
+  "int DwmSetWindowAttribute(unsigned long long hwnd, int attr, void *val, int size)"
+);
+const DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+const DWMWCP_ROUND = 2;
+
+function applyRoundedCorners(win: BrowserWindow): void {
+  try {
+    const buf = win.getNativeWindowHandle();
+    const hwnd = buf.length === 8 ? Number(buf.readBigUInt64LE()) : buf.readUInt32LE();
+    const prefBuf = Buffer.alloc(4);
+    prefBuf.writeUInt32LE(DWMWCP_ROUND, 0);
+    const hr = DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, prefBuf, 4);
+    log(`DwmSetWindowAttribute hwnd=0x${hwnd.toString(16)} hr=0x${(hr >>> 0).toString(16)}`);
+  } catch (e: any) {
+    log(`DWM rounded corners failed: ${e.message}`);
+  }
+}
+
+function applyAcrylic(win: BrowserWindow): void {
+  try {
+    win.setBackgroundMaterial("acrylic");
+    log("setBackgroundMaterial('acrylic') applied");
+  } catch (e: any) {
+    log(`setBackgroundMaterial failed: ${e.message}`);
+  }
+}
+
+// Detect whether the native acrylic blur is likely to actually render.
+// Windows disables acrylic transparently (without an error from
+// setBackgroundMaterial) in several cases:
+//   - Settings → Personalization → Colors → "Transparency effects" OFF
+//     (writes HKCU\...\Personalize\EnableTransparency = 0)
+//   - Battery saver active (DWM suppresses blur at runtime)
+//   - High-contrast accessibility mode
+//   - RDP / VM sessions (no DWM composition)
+// When any of these are true, our translucent --bg-panel (rgba 0.60)
+// has nothing behind it and looks broken. We push the active state to
+// the renderer, which toggles data-acrylic="off" and falls back to the
+// pre-1.12.5 opaque --bg-panel.
+//
+// Battery saver is detected via powerMonitor's low-power signal: when
+// the OS reports low battery, Windows has already throttled transparency.
+// Plain "on battery" is intentionally NOT treated as acrylic-off — most
+// laptops render acrylic fine unplugged until saver kicks in.
+function isAcrylicLikelyActive(): boolean {
+  try {
+    if (nativeTheme.shouldUseHighContrastColors) {
+      log("Acrylic disabled: high-contrast color scheme active");
+      return false;
+    }
+  } catch {
+    // nativeTheme not ready yet — skip this check.
+  }
+
+  // Battery saver / low-power: Windows throttles DWM effects here.
+  try {
+    if (powerMonitor.onBatteryPower) {
+      log("Acrylic disabled: on battery power (saver may suppress blur)");
+      return false;
+    }
+  } catch {
+    // powerMonitor not ready yet — skip this check.
+  }
+
+  // Read the user's Transparency Effects setting from the registry.
+  // This is the most reliable signal: it reflects what Settings UI shows
+  // and is what Windows itself consults when composing the desktop.
+  try {
+    const out = execFileSync(
+      "reg",
+      [
+        "query",
+        "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+        "/v",
+        "EnableTransparency",
+      ],
+      { encoding: "utf-8", timeout: 2000, windowsHide: true }
+    ).toString();
+    const m = out.match(/EnableTransparency\s+REG_DWORD\s+0x([0-9a-fA-F]+)/);
+    if (m && parseInt(m[1], 16) === 0) {
+      log("Acrylic disabled: EnableTransparency=0 (user/system setting)");
+      return false;
+    }
+  } catch (e: any) {
+    // Registry read failed (e.g. WINE, locked-down environment). Don't
+    // assume acrylic is off — let the user see for themselves.
+    log(`Acrylic detection: registry read failed (${e.message}), assuming on`);
+  }
+
+  return true;
+}
+
+function pushAcrylicState(win: BrowserWindow): void {
+  if (win.isDestroyed()) return;
+  const active = isAcrylicLikelyActive();
+  win.webContents.send(IPC.ACRYLIC_STATE, { active });
+}
+
+function calculatePanelPosition(cursorX: number, cursorY: number): { x: number; y: number; width: number; height: number } {
+  const electronCursor = screen.getCursorScreenPoint();
+  log(`Cursor: robotjs=(${cursorX},${cursorY}) electron=(${electronCursor.x},${electronCursor.y})`);
+
+  const display = screen.getDisplayNearestPoint(electronCursor);
+  const workArea = display.workArea;
+  const lx = electronCursor.x;
+  const ly = electronCursor.y;
+  const rightEdge = workArea.x + workArea.width;
+  const bottomEdge = workArea.y + workArea.height;
+
+  // Panel size as percentage of display work area.
+  const panelWidth = Math.round(workArea.width * 0.43);
+  const panelHeight = Math.round(workArea.height * 0.80);
+
+  const PADDING = 8;
+  const halfWidth = workArea.width / 2;
+
+  // Calculate available space on each side of cursor
+  const leftSpace = lx - workArea.x;
+  const rightSpace = rightEdge - lx;
+
+  // Bias toward left side (10% of screen width).
+  const BIAS = workArea.width * 0.1;
+
+  let panelX: number;
+  if (leftSpace >= rightSpace + BIAS) {
+    // Cursor far to the right â†’ place panel on LEFT half, centered within it
+    const leftHalfCenter = workArea.x + halfWidth / 2; // 25% across screen
+    panelX = Math.round(leftHalfCenter - panelWidth / 2);
+    log(`Panel placement: LEFT-HALF-CENTER (cursor-right, leftSpace=${Math.round(leftSpace)}, rightSpace=${Math.round(rightSpace)})`);
+  } else {
+    // Cursor on left or middle â†’ place panel on RIGHT half, centered within it
+    const rightHalfCenter = workArea.x + halfWidth + halfWidth / 2; // 75% across screen
+    panelX = Math.round(rightHalfCenter - panelWidth / 2);
+    log(`Panel placement: RIGHT-HALF-CENTER (cursor-left, leftSpace=${Math.round(leftSpace)}, rightSpace=${Math.round(rightSpace)})`);
+  }
+
+  // Clamp horizontal so panel stays on screen
+  panelX = Math.max(workArea.x + PADDING, Math.min(panelX, rightEdge - panelWidth - PADDING));
+
+  // Vertically center on screen (not relative to cursor)
+  let panelY = workArea.y + Math.round((workArea.height - panelHeight) / 2);
+  panelY = Math.max(workArea.y + PADDING, Math.min(panelY, bottomEdge - panelHeight - PADDING));
+
+  log(`Panel: x=${panelX} y=${panelY} width=${panelWidth} height=${panelHeight} | cursor=(${lx},${ly})`);
+
+  return { x: Math.round(panelX), y: Math.round(panelY), width: panelWidth, height: panelHeight };
+}
+
+function createWindow(cursorX: number, cursorY: number): BrowserWindow {
+  const pos = calculatePanelPosition(cursorX, cursorY);
+  log(`Creating window at x=${pos.x}, y=${pos.y}, width=${pos.width}, height=${pos.height}`);
+
+  // Resolve the owl icon for the BrowserWindow (Alt+Tab, taskbar if the
+  // user ever un-sets skipTaskbar). Looked up relative to the built main
+  // bundle so it works both in dev and packaged.
+  const iconCandidates = [
+    path.join(__dirname, "..", "assets", "icon.png"),
+    path.join(__dirname, "..", "..", "assets", "icon.png"),
+    path.join(app.getAppPath(), "assets", "icon.png"),
+  ];
+  const winIcon = iconCandidates.find((p) => {
+    try { require("fs").accessSync(p); return true; } catch { return false; }
+  });
+
+  const win = new BrowserWindow({
+    width: pos.width,
+    height: pos.height,
+    x: pos.x,
+    y: pos.y,
+    frame: false,
+    ...(winIcon ? { icon: winIcon } : {}),
+    // TRUE per-pixel transparency. All three of these must be set
+    // together on Windows â€” without them Electron draws a default
+    // opaque white/gray rectangle behind the CSS-rounded `.app`, which
+    // is what produced the visible "rectangle behind the rounded
+    // corners" bug:
+    //   - `transparent: true`        enables the alpha channel
+    //   - `backgroundColor: "#00000000"`  clears the default opaque fill
+    //   - `hasShadow: false`         disables the OS drop shadow (we
+    //                                draw our own macOS-style stacked
+    //                                shadow in global.css `.app`)
+    // We're also NOT using backdrop-filter (Chromium on an Electron
+    // transparent window can't sample the desktop behind) nor Windows 11
+    // acrylic (auto-dims on blur). The panel uses a solid teal-ink tint.
+    transparent: true,
+    backgroundColor: "#00000000",
+    hasShadow: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    // Window resize is handled by EXPLICIT grips rendered in the renderer
+    // (ResizeGrips.tsx — a bottom edge + bottom-right corner handle), NOT by
+    // the native Windows edge gutter. `resizable: false` removes the
+    // invisible ~6px native gutter on all sides that used to intercept
+    // scroll/clicks near the panel edges. The renderer drives resize via the
+    // RESIZE_PANEL IPC (clamped below in ipc-handlers to the min/max here);
+    // setBounds works regardless of the resizable flag.
+    resizable: false,
+    minWidth: 560,
+    minHeight: 360,
+    maxWidth: 900,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  // Persist the resized size on hide/close so it survives a relaunch.
+  // We persist only on hide/close â€” NOT on every `resize` event â€” to
+  // avoid hammering the config file while the user drags a corner.
+  // Position is NOT persisted; the panel is cursor-first and re-anchors
+  // on every activation.
+  const savePanelSizeOnHide = () => {
+    if (win.isDestroyed()) return;
+    const [w, h] = win.getSize();
+    patchConfigPersistOnly({ panelWidth: w, panelHeight: h });
+  };
+  win.on("hide", savePanelSizeOnHide);
+  win.on("close", savePanelSizeOnHide);
+
+  // Desktop-wide cursor polling for the owl mascot. Runs only while the
+  // panel is visible â€” ~33ms cadence (~30 Hz) is smooth enough for pupil
+  // tracking and cheap enough not to notice. Using the Electron `screen`
+  // API (not robotjs) so we don't pay a native-module call per tick.
+  let cursorTimer: NodeJS.Timeout | null = null;
+  const { screen: electronScreen } = require("electron") as typeof import("electron");
+  const startCursorPolling = () => {
+    if (cursorTimer) return;
+    cursorTimer = setInterval(() => {
+      if (win.isDestroyed() || !win.isVisible() || win.isMinimized()) return;
+      const pos = electronScreen.getCursorScreenPoint();
+      win.webContents.send(IPC.CURSOR_POS, pos);
+    }, 33);
+  };
+  const stopCursorPolling = () => {
+    if (cursorTimer) {
+      clearInterval(cursorTimer);
+      cursorTimer = null;
+    }
+  };
+  win.on("show", startCursorPolling);
+  win.on("hide", stopCursorPolling);
+  win.on("close", stopCursorPolling);
+  // After a taskbar-minimize (MINIMIZE_TO_TASKBAR un-skips the taskbar so a
+  // restorable button appears), return the panel to its normal tray-centric
+  // floating mode (skipTaskbar:true) once the user restores it.
+  win.on("restore", () => {
+    try { win.setSkipTaskbar(true); } catch { /* window gone */ }
+  });
+
+  log(`Loading index.html from ${path.join(__dirname, "index.html")}`);
+  log(`dist dir contents: ${fs.readdirSync(path.join(__dirname)).join(", ")}`);
+
+  win.loadFile(path.join(__dirname, "index.html"));
+
+  win.webContents.on("did-finish-load", () => {
+    log("Renderer finished loading");
+  });
+
+  win.webContents.on("did-fail-load", (_e, code, desc) => {
+    log(`ERROR: Renderer failed to load: code=${code} desc=${desc}`);
+  });
+
+  win.webContents.on("console-message", (_e, level, msg) => {
+    const levels = ["verbose", "info", "warning", "error"];
+    log(`Renderer console [${levels[level] || level}]: ${msg}`);
+  });
+
+  win.webContents.on("render-process-gone", (_e, details) => {
+    log(`ERROR: Renderer process gone: reason=${details.reason} exitCode=${details.exitCode}`);
+  });
+
+  log("Window created successfully");
+  return win;
+}
+
+function showPanel(context: ContextPayload): void {
+  log(`showPanel called with context: element=${context.element?.type} "${context.element?.name}" (${context.element?.value?.slice(0, 50)}...)`);
+
+  const cursorX = context.cursorPos?.x ?? 400;
+  const cursorY = context.cursorPos?.y ?? 400;
+
+  if (!mainWindow) {
+    log("No existing window, creating new one");
+    mainWindow = createWindow(cursorX, cursorY);
+    mainWindow.on("closed", () => {
+      log("Window closed");
+      mainWindow = null;
+    });
+  } else {
+    const pos = calculatePanelPosition(cursorX, cursorY);
+    log(`Repositioning existing window to x=${pos.x}, y=${pos.y}, size=${pos.width}x${pos.height}`);
+    mainWindow.setPosition(pos.x, pos.y);
+    mainWindow.setSize(pos.width, pos.height);
+  }
+
+  const sendContext = () => {
+    log(`Sending CONTEXT_READY to renderer`);
+    mainWindow?.webContents.send(IPC.CONTEXT_READY, context);
+  };
+
+  if (mainWindow.webContents.isLoading()) {
+    log("Window still loading, waiting for did-finish-load...");
+    mainWindow.webContents.once("did-finish-load", () => {
+      log("did-finish-load fired, sending context");
+      sendContext();
+    });
+  } else {
+    log("Window already loaded, sending context immediately");
+    sendContext();
+  }
+
+  mainWindow.show();
+  applyAcrylic(mainWindow);
+  applyRoundedCorners(mainWindow);
+  pushAcrylicState(mainWindow);
+  mainWindow.focus();
+  mainWindow.moveTop();
+
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.focus();
+      mainWindow.webContents.send(IPC.FOCUS_INPUT);
+    }
+  }, 150);
+
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.focus();
+      mainWindow.webContents.send(IPC.FOCUS_INPUT);
+    }
+  }, 400);
+
+  log("Panel shown and focused");
+}
+
+function hidePanel(): void {
+  log("hidePanel called");
+  if (mainWindow) {
+    mainWindow.hide();
+    log("Window hidden");
+  }
+}
+
+function showExistingPanel(): void {
+  log("showExistingPanel called â€” re-showing with last context (no reset)");
+  if (!mainWindow) {
+    log("No existing window, cannot re-show");
+    return;
+  }
+  const pos = calculatePanelPosition(
+    lastCursorX ?? screen.getPrimaryDisplay().workAreaSize.width / 2,
+    lastCursorY ?? screen.getPrimaryDisplay().workAreaSize.height / 2
+  );
+  mainWindow.setPosition(pos.x, pos.y);
+  mainWindow.setSize(pos.width, pos.height);
+  mainWindow.show();
+  mainWindow.focus();
+  mainWindow.moveTop();
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.focus();
+      mainWindow.webContents.send(IPC.FOCUS_INPUT);
+    }
+  }, 150);
+}
+
+let lastCursorX: number | null = null;
+let lastCursorY: number | null = null;
+
+// Monotonically increasing activation id. Each hotkey press bumps it and
+// stamps the resulting context read; any .then that resolves for a superseded
+// id is dropped. Without this, a slow first UIA read can finish AFTER a
+// faster second read and overwrite the live context with stale data — the
+// user sees the panel "stuck on" the previous element.
+let activationSeq = 0;
+
+async function handlePointerActivate(cursorPos: { x: number; y: number }): Promise<void> {
+  const myActivation = ++activationSeq;
+  log(`Pointer hotkey at cursor pos: x=${cursorPos.x}, y=${cursorPos.y} (activation #${myActivation})`);
+  lastCursorX = cursorPos.x;
+  lastCursorY = cursorPos.y;
+
+  // Hide any existing panel immediately; show a semi-transparent capture badge
+  // near the cursor while we capture context/screenshot. The panel itself is
+  // NOT shown until the data is ready — this prevents the "open -> hide ->
+  // re-open" flash and the random highlight rectangle the user sees mid-capture.
+  if (mainWindow && mainWindow.isVisible()) {
+    mainWindow.hide();
+  }
+  startCaptureShimmer();
+
+  let targetHwnd = 0;
+  try {
+    const { getActiveHwnd } = await import("./guide/active-window");
+    targetHwnd = await getActiveHwnd();
+    log(`Captured target HWND before panel show: ${targetHwnd}`);
+  } catch (err: any) {
+    log(`HWND capture failed (${err?.message || err}) -- proceeding without`);
+  }
+
+    try {
+      const ctx = await readContextAtPoint(cursorPos.x, cursorPos.y, targetHwnd);
+      if (myActivation !== activationSeq) {
+        cancelCaptureShimmer();
+        return;
+      }
+
+      const context: ContextPayload = { ...ctx, cursorPos, source: "pointer" };
+      setContext(context);
+
+      log("Pointer hotkey — always capturing full-screen screenshot with grid");
+      try {
+        const { screen: electronScreen } = require("electron") as typeof import("electron");
+        const display = electronScreen.getDisplayNearestPoint(cursorPos);
+        const sf = display.scaleFactor || 1;
+        const b = display.bounds;
+        // Freeze the sheen band off so it doesn't appear in the screenshot
+        // (dim stays — content remains readable). Wait a beat for the
+        // renderer to paint the frozen state before GDI grabs the screen.
+        freezeCaptureShimmerForShot();
+        await new Promise((r) => setTimeout(r, 80));
+        const screenshotPath = await captureAndOptimize(
+          Math.round(b.x * sf), Math.round(b.y * sf),
+          Math.round((b.x + b.width) * sf), Math.round((b.y + b.height) * sf),
+          { noGrid: false },
+        );
+        if (screenshotPath) {
+          attachAutoScreenshot(screenshotPath);
+          setScreenshotMode("manual", { physicalWidth: Math.round(b.width * sf), physicalHeight: Math.round(b.height * sf), scaleFactor: sf });
+          context.hasScreenshot = true;
+          context.imagePath = screenshotPath;
+          log(`Pointer screenshot attached: ${screenshotPath.slice(-40)} (screen ${Math.round(b.width * sf)}x${Math.round(b.height * sf)} physical @${sf}x)`);
+        } else {
+          log(`Pointer screenshot capture returned null`);
+        }
+      } catch (err: any) {
+        log(`Pointer screenshot capture failed: ${err?.message || err}`);
+      }
+
+      // Play the one-shot end wash, then pop the panel + target highlight.
+      finishCaptureShimmer(() => {
+        showElementHighlight(ctx.element.bounds);
+        showPanel(context);
+      });
+    } catch (err: any) {
+    if (myActivation !== activationSeq) {
+      cancelCaptureShimmer();
+      return;
+    }
+    log(`ERROR reading context: ${err.message}`);
+    cancelCaptureShimmer();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC.CONTEXT_LOADING, false);
+    }
+  }
+}
+
+function handleQuickActivate(cursorPos: { x: number; y: number }): void {
+  const myActivation = ++activationSeq;
+  log(`Quick hotkey at cursor pos: x=${cursorPos.x}, y=${cursorPos.y} (activation #${myActivation})`);
+  hidePanel();
+  const display = screen.getDisplayNearestPoint(cursorPos);
+  const emptyContext: ContextPayload = {
+    element: {
+      name: "",
+      type: "none",
+      value: "",
+      bounds: { x: 0, y: 0, width: 0, height: 0 },
+      children: [],
+    },
+    surrounding: [],
+    source: "quick",
+    cursorPos: {
+      x: Math.round(display.bounds.x + display.bounds.width / 2),
+      y: Math.round(display.bounds.y + display.bounds.height / 2),
+    },
+  };
+  setContext(emptyContext);
+  showPanel(emptyContext);
+}
+
+function handleAreaActivate(): void {
+  const myActivation = ++activationSeq;
+  log(`Area hotkey triggered â€” starting area selection (activation #${myActivation})`);
+  hidePanel();
+  startAreaSelection((rect) => {
+    if (myActivation !== activationSeq) {
+      log(`Area activation #${myActivation} superseded by #${activationSeq}`);
+      return;
+    }
+    log(`Area selected (physical): (${rect.x1},${rect.y1}) to (${rect.x2},${rect.y2})`);
+    const px1 = rect.x1;
+    const py1 = rect.y1;
+    const px2 = rect.x2;
+    const py2 = rect.y2;
+    const midX = (px1 + px2) / 2;
+    const midY = (py1 + py2) / 2;
+    const cursorPos = { x: Math.round(midX), y: Math.round(midY) };
+    startCaptureShimmer();
+    scanArea(px1, py1, px2, py2, async () => {
+      freezeCaptureShimmerForShot();
+      await new Promise((r) => setTimeout(r, 80));
+    }).then(async ({ elements, imagePath }) => {
+      if (myActivation !== activationSeq) {
+        log(`Area scan for #${myActivation} superseded by #${activationSeq} â€” discarding result`);
+        cancelCaptureShimmer();
+        if (imagePath) cleanupImage(imagePath);
+        return;
+      }
+      log(`Area scan found ${elements.length} elements, image=${imagePath ? "captured" : "none"}`);
+
+      const { screen: electronScreen } = require("electron") as typeof import("electron");
+      const display = electronScreen.getDisplayNearestPoint(cursorPos);
+      const sf = display.scaleFactor || 1;
+      const b = display.bounds;
+
+      const context = setAreaContext(elements, rect, cursorPos, imagePath);
+      context.source = "area";
+      // Play the end wash, then pop the panel (positioned near the rect center)
+      // alongside the area highlight.
+      finishCaptureShimmer(() => {
+        showAreaHighlight(rect);
+        showPanel(context);
+      });
+    }).catch((err) => {
+      log(`ERROR scanning area: ${err.message}`);
+      cancelCaptureShimmer();
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC.CONTEXT_LOADING, false);
+      }
+    });
+  });
+}
+
+function applyTheme(theme: "system" | "light" | "dark"): void {
+  try {
+    nativeTheme.themeSource = theme;
+    log(`Theme set to: ${theme} (resolved dark=${nativeTheme.shouldUseDarkColors})`);
+  } catch (e: any) {
+    log(`applyTheme FAILED: ${e.message}`);
+  }
+}
+
+function applyLoginItemSetting(launchOnStartup: boolean): void {
+  try {
+    const args: string[] = [];
+    if (!app.isPackaged) {
+      // In dev mode, process.execPath is electron.exe (not our app binary).
+      // Without the app path as the first arg, Windows startup launches
+      // electron.exe with only --hidden → shows the default Electron
+      // welcome page instead of MudrikNow.
+      args.push(app.getAppPath());
+    }
+    if (launchOnStartup) {
+      args.push("--hidden");
+    }
+    app.setLoginItemSettings({
+      openAtLogin: launchOnStartup,
+      openAsHidden: true,
+      args,
+    });
+    log(`setLoginItemSettings: openAtLogin=${launchOnStartup}, isPackaged=${app.isPackaged}, args=${JSON.stringify(args)}`);
+  } catch (e: any) {
+    log(`setLoginItemSettings FAILED: ${e.message}`);
+  }
+}
+
+// One-time cleanup: if the user previously toggled "Launch on startup"
+// while running in dev mode, a stale registry entry was created under
+// "electron.app.Electron" pointing to the dev electron.exe without the
+// app path. On Windows startup, that entry launches electron.exe --hidden
+// which shows the default Electron welcome page. We proactively remove
+// it if the value references our project directory.
+function cleanupStaleDevStartupEntry(): void {
+  if (!app.isPackaged) return; // don't touch registry in dev mode
+  try {
+    const out = execFileSync(
+      "reg",
+      ["query", "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", "/v", "electron.app.Electron"],
+      { encoding: "utf-8", timeout: 2000, windowsHide: true }
+    ).toString();
+    // Only delete if the value points to our project dir (hoverbuddy).
+    // Another Electron app might legitimately use the default "Electron"
+    // name — we don't want to nuke its startup entry.
+    if (out.includes("hoverbuddy")) {
+      execFileSync(
+        "reg",
+        ["delete", "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", "/v", "electron.app.Electron", "/f"],
+        { encoding: "utf-8", timeout: 2000, windowsHide: true }
+      );
+      log("cleanupStaleDevStartupEntry: removed stale electron.app.Electron (hoverbuddy) entry");
+    }
+  } catch {
+    // Key doesn't exist or read failed — nothing to clean up.
+  }
+}
+
+async function maybeShowWelcome(): Promise<void> {
+  if (config.hasCompletedWelcome) return;
+  try {
+    await dialog.showMessageBox({
+      type: "info",
+      title: "Welcome to MudrikNow",
+      message: "MudrikNow runs from the system tray.",
+      detail:
+        `Press ${config.hotkeyPointer} on any window to open the assistant for the UI element under your cursor.\n\n` +
+        `Press ${config.hotkeyQuick} for quick chat — instant AI without screen capture.\n\n` +
+        `You can change the model, hotkeys, and startup behaviour from the âš™ menu in the panel.`,
+      buttons: ["Get started"],
+      defaultId: 0,
+      noLink: true,
+    });
+  } catch (e: any) {
+    log(`Welcome dialog failed: ${e.message}`);
+  }
+  config.hasCompletedWelcome = true;
+  saveConfig(config);
+}
+
+function showStartupSplash(onClosed?: () => void): void {
+  const iconCandidates = [
+    path.join(__dirname, "..", "assets", "icon.png"),
+    path.join(__dirname, "..", "..", "assets", "icon.png"),
+    path.join(app.getAppPath(), "assets", "icon.png"),
+  ];
+  const iconPath = iconCandidates.find((p) => {
+    try { fs.accessSync(p); return true; } catch { return false; }
+  });
+  const iconUrl = iconPath ? pathToFileURL(iconPath).href : "";
+
+  const display = screen.getPrimaryDisplay();
+  const w = 320;
+  const h = 200;
+  const x = Math.round(display.bounds.x + (display.bounds.width - w) / 2);
+  const y = Math.round(display.bounds.y + (display.bounds.height - h) / 2);
+
+  const html = `<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head><meta charset="UTF-8" />
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:100%; height:100%; overflow:hidden; background:transparent; }
+  body {
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    background:rgba(15,23,42,0.94); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    color:#fff; user-select:none; -webkit-app-region:no-drag;
+    animation:fadeIn 0.4s ease; border-radius:12px; cursor:pointer;
+  }
+  img { width:64px; height:64px; margin-bottom:14px; }
+  .title { font-size:15px; font-weight:600; margin-bottom:4px; }
+  .hint { font-size:13px; color:rgba(255,255,255,0.65); }
+  .dismiss { margin-top:12px; font-size:11px; color:rgba(255,255,255,0.35); }
+  @keyframes fadeIn { from{opacity:0;transform:scale(0.95)} to{opacity:1;transform:scale(1)} }
+</style></head>
+<body onclick="window.close()">
+  ${iconUrl ? `<img src="${iconUrl}" alt="MudrikNow" />` : ''}
+  <div class="title">MudrikNow is now running in your tray</div>
+  <div class="hint">Alt+Space to get started</div>
+  <div class="dismiss">Click to dismiss</div>
+</body></html>`;
+
+  const win = new BrowserWindow({
+    width: w, height: h, x, y,
+    frame: false,
+    transparent: true,
+    backgroundColor: "#00000000",
+    hasShadow: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    focusable: false,
+    resizable: false,
+    show: false,
+    webPreferences: { nodeIntegration: false, contextIsolation: true },
+  });
+
+  win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+
+  const timer = setTimeout(() => {
+    try { if (!win.isDestroyed()) win.close(); } catch (e) { /* already closed */ }
+  }, 4000);
+
+  win.once("ready-to-show", () => win.show());
+
+  win.on("closed", () => {
+    clearTimeout(timer);
+    onClosed?.();
+  });
+}
+
+app.whenReady().then(async () => {
+  if (!gotTheLock) return;
+  log("App ready, initializing...");
+
+  const startedHidden = process.argv.includes("--hidden");
+
+  const firstRun = isFirstRun();
+  config = loadConfig();
+  log(`Config loaded: model=${config.model}, workingDir=${config.workingDir}, firstRun=${firstRun}`);
+
+  // Persist the default config on first run so subsequent launches see it
+  // and first-run detection is accurate.
+  if (firstRun) saveConfig(config);
+
+  ensureAgentInWorkingDir(config.workingDir, config.readOnlyCommandsEnabled);
+
+  pruneOldLogs(30 * 24 * 60 * 60 * 1000); // 30 days
+
+  applyTheme(config.theme);
+  applyLoginItemSetting(config.launchOnStartup);
+  cleanupStaleDevStartupEntry();
+
+  // Re-push acrylic state when the OS-level inputs change while the panel
+  // is open: power-source transitions (AC ↔ battery) and high-contrast
+  // toggle both flip whether Windows will render our acrylic blur. We
+  // don't have a native event for the EnableTransparency registry value,
+  // so that one is only re-evaluated on the next panel show.
+  const onPowerChange = () => {
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
+      pushAcrylicState(mainWindow);
+    }
+  };
+  powerMonitor.on("on-battery", onPowerChange);
+  powerMonitor.on("on-ac", onPowerChange);
+  nativeTheme.on("updated", onPowerChange);
+
+  // Always show the splash on every launch — including Windows auto-startup
+  // (--hidden). The --hidden flag only suppresses the panel window, not the
+  // splash. Without this, Windows startup shows a bare Electron taskbar
+  // icon with no visual feedback to the user.
+  showSplashScreen({
+    pointer: config.hotkeyPointer,
+    // area omitted — Area Capture is disabled for redesign
+    quick: config.hotkeyQuick,
+    lang: config.lang,
+  });
+  splashShownForThisLaunch = true;
+
+  // On first run the welcome dialog follows the splash; otherwise show it
+  // immediately on normal launches that didn't display a splash.
+  if (!startedHidden && !splashShownForThisLaunch) {
+    await maybeShowWelcome();
+  } else if (firstRun && splashShownForThisLaunch) {
+    // Defer welcome until the splash auto-closes so the user isn't buried
+    // in stacked windows. We still mark it completed synchronously below.
+    setTimeout(() => void maybeShowWelcome(), 4000);
+  }
+
+  createTrayWithShow(
+    () => {
+      const lastCtx = getLastContext();
+      if (lastCtx && mainWindow) {
+        log("Show Panel from tray â€” re-showing with last context");
+        showExistingPanel();
+        return;
+      }
+      // No real context yet. Open an empty panel centered on the primary
+      // display so the user can chat without a target element. Previously we
+      // synthesized a fake "Test Element" context, which looked like a bug
+      // to first-time users.
+      log("Show Panel from tray â€” no existing context, opening empty panel");
+      const display = screen.getPrimaryDisplay();
+      const emptyContext: ContextPayload = {
+        element: {
+          name: "",
+          type: "none",
+          value: "",
+          bounds: { x: 0, y: 0, width: 0, height: 0 },
+          children: [],
+        },
+        surrounding: [],
+        source: "quick",
+        cursorPos: {
+          x: Math.round(display.workAreaSize.width / 2),
+          y: Math.round(display.workAreaSize.height / 2),
+        },
+      };
+      setContext(emptyContext);
+      showPanel(emptyContext);
+    },
+    () => app.quit()
+  );
+  log("Tray created");
+
+  registerIpcHandlers(config, showPanel, hidePanel, (next, prev) => {
+    if (next.hotkeyPointer !== prev.hotkeyPointer || next.hotkeyArea !== prev.hotkeyArea || next.hotkeyQuick !== prev.hotkeyQuick) {
+      const result = applyHotkeys({ pointer: next.hotkeyPointer, area: next.hotkeyArea, quick: next.hotkeyQuick });
+      if (!result.ok) {
+        // Roll back the in-memory config so UI shows the previous working values.
+        config.hotkeyPointer = prev.hotkeyPointer;
+        config.hotkeyArea = prev.hotkeyArea;
+        config.hotkeyQuick = prev.hotkeyQuick;
+        saveConfig(config);
+      }
+    }
+    if (next.launchOnStartup !== prev.launchOnStartup) {
+      applyLoginItemSetting(next.launchOnStartup);
+    }
+    if (next.theme !== prev.theme) {
+      applyTheme(next.theme);
+    }
+    if (next.workingDir !== prev.workingDir) {
+      ensureAgentInWorkingDir(next.workingDir, next.readOnlyCommandsEnabled);
+    }
+  });
+  log("IPC handlers registered");
+
+  startHotkeyListener(
+    {
+      onPointerActivate: handlePointerActivate,
+      onAreaActivate: handleAreaActivate,
+      onQuickActivate: handleQuickActivate,
+    },
+    { pointer: config.hotkeyPointer, area: config.hotkeyArea, quick: config.hotkeyQuick }
+  );
+  log("Hotkey listener started");
+  // Keep the splash visible long enough for the user to read it, then close.
+  if (splashShownForThisLaunch) {
+    closeSplashScreen(3600);
+  }
+
+  initUpdater();
+  log("Updater initialized");
+
+  app.on("before-quit", () => {
+    log("App quitting...");
+    stopUpdater();
+    stopHotkeyListener();
+    destroyTray();
+  });
+});
+
+log("Main process script loaded");
+
+app.on("window-all-closed", () => {
+  log("window-all-closed event (suppressed — tray app)");
+});

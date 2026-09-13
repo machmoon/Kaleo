@@ -1,0 +1,19 @@
+node_modules/
+dist/
+release/
+scripts/out/
+*.js.map
+*.log
+.env
+.env.*
+!.env.example
+
+# Local-only working dirs (planning notes, scratch, agent state)
+.claude/
+.local/
+.impeccable/
+.planning/
+docs/superpowers/
+docs/ROADMAP.md
+/.opencode/instructions.md
+nul

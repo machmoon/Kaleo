@@ -1,0 +1,305 @@
+import React, { useState } from "react";
+import {
+  Home,
+  MessageSquare,
+  NotebookPen,
+  BookOpen,
+  Upload,
+  Blocks,
+  Gift,
+  Lock,
+  Settings,
+  ShieldCheck,
+  HelpCircle,
+  UserCircle,
+  X,
+  Search,
+  Zap,
+} from "lucide-react";
+import logoIcon from "../assets/icon.png";
+import { useTranslation } from "react-i18next";
+import { cn } from "./lib/utils";
+import SupportDropdown from "./ui/SupportDropdown";
+import { getCachedPlatform } from "../utils/platform";
+import type { UpsellDecision } from "../lib/upsell";
+import { isAgentAllowed, isPolicyActionAllowed } from "../stores/policyRules";
+import { usePolicyStore } from "../stores/policyStore";
+
+const platform = getCachedPlatform();
+
+const rowIconClass =
+  "shrink-0 text-foreground/60 group-hover:text-foreground/75 dark:text-foreground/50 dark:group-hover:text-foreground/65 transition-colors duration-150";
+const rowLabelClass =
+  "text-xs text-foreground/80 group-hover:text-foreground dark:text-foreground/70 dark:group-hover:text-foreground/85 transition-colors duration-150";
+const rowButtonClass =
+  "group flex items-center gap-2.5 w-full h-8 px-2.5 rounded-md text-left outline-none hover:bg-foreground/4 dark:hover:bg-white/4 focus-visible:ring-1 focus-visible:ring-primary/30 transition-colors duration-150";
+
+export type ControlPanelView =
+  "home" | "chat" | "personal-notes" | "dictionary" | "upload" | "integrations";
+
+interface ControlPanelSidebarProps {
+  activeView: ControlPanelView;
+  onViewChange: (view: ControlPanelView) => void;
+  onOpenSettings: () => void;
+  onOpenSearch?: () => void;
+  onOpenReferrals?: () => void;
+  onUpgrade?: () => void;
+  isOverLimit?: boolean;
+  userName?: string | null;
+  userEmail?: string | null;
+  userImage?: string | null;
+  isSignedIn?: boolean;
+  authLoaded?: boolean;
+  upsell: UpsellDecision;
+  updateAction?: React.ReactNode;
+}
+
+export default function ControlPanelSidebar({
+  activeView,
+  onViewChange,
+  onOpenSettings,
+  onOpenSearch,
+  onOpenReferrals,
+  onUpgrade,
+  isOverLimit,
+  userName,
+  userEmail,
+  userImage,
+  isSignedIn,
+  authLoaded,
+  upsell,
+  updateAction,
+}: ControlPanelSidebarProps) {
+  const { t } = useTranslation();
+  const [upgradeDismissed, setUpgradeDismissed] = useState(
+    () => localStorage.getItem("upgradeProDismissed") === "true"
+  );
+
+  const showLimitBanner = upsell === "show" && Boolean(isSignedIn) && Boolean(isOverLimit);
+  const showUpgradeBanner = upsell === "show" && !showLimitBanner && !upgradeDismissed;
+
+  const agentAllowed = usePolicyStore(isAgentAllowed);
+  const policyActionsAllowed = usePolicyStore((state) => isPolicyActionAllowed(state));
+
+  const navItems: {
+    id: ControlPanelView;
+    label: string;
+    icon: React.ComponentType<{ size?: number; className?: string }>;
+  }[] = [
+    { id: "home", label: t("sidebar.home"), icon: Home },
+    ...(agentAllowed
+      ? [{ id: "chat" as const, label: t("sidebar.chat"), icon: MessageSquare }]
+      : []),
+    { id: "personal-notes", label: t("sidebar.notes"), icon: NotebookPen },
+    ...(policyActionsAllowed
+      ? [{ id: "upload" as const, label: t("sidebar.upload"), icon: Upload }]
+      : []),
+    { id: "dictionary", label: t("sidebar.dictionary"), icon: BookOpen },
+    { id: "integrations", label: t("sidebar.integrations"), icon: Blocks },
+  ];
+
+  return (
+    <div className="w-48 h-full shrink-0 border-r border-border/15 dark:border-white/6 flex flex-col bg-surface-1/60 dark:bg-surface-1">
+      <div
+        className="w-full h-10 shrink-0"
+        style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+      />
+
+      {onOpenSearch && (
+        <div className="px-2 pt-2 pb-1">
+          <button
+            onClick={onOpenSearch}
+            className="group flex items-center w-full h-7 px-2.5 rounded-md border border-border/70 dark:border-white/25 bg-transparent hover:bg-foreground/5 dark:hover:bg-white/5 transition-colors gap-2 outline-none focus-visible:ring-1 focus-visible:ring-primary/30"
+          >
+            <Search size={11} className="text-muted-foreground/50 shrink-0" />
+            <span className="flex-1 text-[11px] text-left text-muted-foreground/50">
+              {t("commandSearch.shortPlaceholder")}
+            </span>
+            <div className="flex items-center gap-0.5 shrink-0">
+              <kbd className="text-[10px] px-1 py-px rounded border border-border/30 dark:border-white/8 bg-muted/40 text-muted-foreground/40 font-mono leading-tight">
+                {platform === "darwin" ? "⌘" : "Ctrl"}
+              </kbd>
+              <kbd className="text-[10px] px-1 py-px rounded border border-border/30 dark:border-white/8 bg-muted/40 text-muted-foreground/40 font-mono leading-tight">
+                K
+              </kbd>
+            </div>
+          </button>
+        </div>
+      )}
+
+      <nav className="flex flex-col gap-0.5 px-2 pt-2 pb-2">
+        {navItems.map((item) => {
+          const Icon = item.icon;
+          const isActive = activeView === item.id;
+
+          return (
+            <button
+              key={item.id}
+              onClick={() => onViewChange(item.id)}
+              className={cn(
+                "group relative flex items-center gap-2.5 w-full h-8 px-2.5 rounded-md outline-none transition-colors duration-150 text-left",
+                "focus-visible:ring-1 focus-visible:ring-primary/30",
+                isActive
+                  ? "bg-primary/8 dark:bg-primary/10"
+                  : "hover:bg-foreground/4 dark:hover:bg-white/4 active:bg-foreground/6"
+              )}
+            >
+              <Icon
+                size={15}
+                className={cn(
+                  "shrink-0 transition-colors duration-150",
+                  isActive
+                    ? "text-primary"
+                    : "text-foreground/60 group-hover:text-foreground/75 dark:text-foreground/55 dark:group-hover:text-foreground/70"
+                )}
+              />
+              <span
+                className={cn(
+                  "text-xs transition-colors duration-150",
+                  isActive
+                    ? "text-foreground font-medium"
+                    : "text-foreground/80 group-hover:text-foreground dark:text-foreground/75 dark:group-hover:text-foreground/90"
+                )}
+              >
+                {item.label}
+              </span>
+            </button>
+          );
+        })}
+      </nav>
+
+      <div className="flex-1" />
+
+      {showLimitBanner && (
+        <div className="px-2 pb-2">
+          <div className="rounded-lg border border-destructive/25 bg-destructive/5 dark:bg-destructive/10 p-3">
+            <div className="flex flex-col items-center text-center">
+              <img src={logoIcon} alt="" className="w-7 h-7 rounded-md mb-2" />
+              <p className="text-xs font-medium text-foreground mb-0.5">
+                {t("sidebar.limitReached")}
+              </p>
+              <p className="text-[11px] leading-snug text-muted-foreground mb-2.5">
+                {t("sidebar.limitReachedDescription")}
+              </p>
+              <button
+                onClick={onUpgrade}
+                className="w-full h-7 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
+              >
+                {t("sidebar.viewPlans")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showUpgradeBanner && (
+        <div className="px-2 pb-2">
+          <div className="relative rounded-xl border border-[#6c50e9]/25 dark:border-[#6c50e9]/40 bg-card bg-gradient-to-b from-[#6c50e9]/15 via-[#6c50e9]/5 to-transparent dark:from-[#6c50e9]/30 dark:via-[#6c50e9]/10 p-3">
+            <button
+              onClick={() => {
+                setUpgradeDismissed(true);
+                localStorage.setItem("upgradeProDismissed", "true");
+              }}
+              aria-label={t("common.dismiss")}
+              className="absolute top-2 right-2 p-0.5 rounded-sm text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+            >
+              <X size={12} />
+            </button>
+            <img src={logoIcon} alt="" className="w-7 h-7 rounded-md mb-2.5" />
+            <p className="text-[13px] font-semibold text-foreground mb-0.5">
+              {t("sidebar.upgradeTitle")}
+            </p>
+            <p className="text-xs leading-snug text-muted-foreground mb-2.5">
+              {t("sidebar.upgradeDescription")}
+            </p>
+            <div className="space-y-1.5 mb-3">
+              {(
+                [
+                  [Zap, t("sidebar.upgradeInstantSetup")],
+                  [Lock, t("sidebar.upgradeZeroRetention")],
+                  [ShieldCheck, t("sidebar.upgradeEnterpriseSecurity")],
+                ] as const
+              ).map(([Icon, label]) => (
+                <div key={label} className="flex items-start gap-1.5">
+                  <Icon size={12} className="shrink-0 mt-px text-foreground/60" />
+                  <span className="text-[11px] leading-snug text-foreground/80">{label}</span>
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={onUpgrade}
+              className="w-full h-7 rounded-full bg-[#4079ed] text-white text-xs font-medium hover:bg-[#3568d9] active:bg-[#2f5dc4] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4079ed]/40 transition-colors"
+            >
+              {t("sidebar.learnMore")}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="px-2 pb-2 space-y-0.5">
+        {updateAction && (
+          <div className="px-1 pb-1" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
+            {updateAction}
+          </div>
+        )}
+
+        {isSignedIn && onOpenReferrals && (
+          <button
+            onClick={onOpenReferrals}
+            aria-label={t("sidebar.referral")}
+            className={rowButtonClass}
+          >
+            <Gift size={15} className={rowIconClass} />
+            <span className={rowLabelClass}>{t("sidebar.referral")}</span>
+          </button>
+        )}
+
+        <button
+          onClick={onOpenSettings}
+          aria-label={t("sidebar.settings")}
+          className={rowButtonClass}
+        >
+          <Settings size={15} className={rowIconClass} />
+          <span className={rowLabelClass}>{t("sidebar.settings")}</span>
+        </button>
+
+        <SupportDropdown
+          trigger={
+            <button aria-label={t("sidebar.support")} className={rowButtonClass}>
+              <HelpCircle size={15} className={rowIconClass} />
+              <span className={rowLabelClass}>{t("sidebar.support")}</span>
+            </button>
+          }
+        />
+
+        <div className="mx-1 h-px bg-border/10 dark:bg-white/6 my-1.5!" />
+
+        <div className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-md">
+          {userImage ? (
+            <img src={userImage} alt="" className="w-6 h-6 rounded-full shrink-0 object-cover" />
+          ) : (
+            <UserCircle size={18} className="shrink-0 text-foreground/50 dark:text-foreground/45" />
+          )}
+          <div className="flex-1 min-w-0">
+            {isSignedIn && (userName || userEmail) ? (
+              <>
+                <p className="text-xs text-foreground/80 dark:text-foreground/80 truncate leading-tight">
+                  {userName || t("sidebar.defaultUser")}
+                </p>
+                {userEmail && (
+                  <p className="text-xs text-foreground/55 dark:text-foreground/55 truncate leading-tight">
+                    {userEmail}
+                  </p>
+                )}
+              </>
+            ) : authLoaded && !isSignedIn ? (
+              <p className="text-xs text-foreground/45 dark:text-foreground/55">
+                {t("sidebar.notSignedIn")}
+              </p>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

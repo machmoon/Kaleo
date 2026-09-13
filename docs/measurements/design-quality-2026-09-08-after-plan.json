@@ -1,0 +1,1027 @@
+{
+  "model": "gemini-3.5-flash-lite",
+  "plan": true,
+  "summary": {
+    "trials": 9,
+    "validated": 9,
+    "scored_on_function": 5,
+    "correct": 4,
+    "unscored": 4,
+    "mean_rounds": 1.444,
+    "first_round_clean": 6,
+    "dropped_transport_failures": 0,
+    "instruction_conflicts": 3,
+    "named_the_part": 9,
+    "reached_a_verdict": 5
+  },
+  "trials": [
+    {
+      "case": "ldo",
+      "trial": 1,
+      "validated": true,
+      "rounds": 1,
+      "validation_errors": [],
+      "structural_problems": [],
+      "instruction_conflicts": [],
+      "simulated": true,
+      "refusal": null,
+      "clauses": [
+        {
+          "name": "rail is 3.3 V at 10 mA",
+          "passed": true,
+          "measured": 3.299500075746099,
+          "expected": 3.3,
+          "op": "within",
+          "unit": "V",
+          "margin": -0.0004999242539009963,
+          "error": null
+        },
+        {
+          "name": "rail never exceeds nameplate + 10%",
+          "passed": true,
+          "measured": 3.2995000757461,
+          "expected": 3.63,
+          "op": "<=",
+          "unit": "V",
+          "margin": 0.33049992425389974,
+          "error": null
+        }
+      ],
+      "correct": true,
+      "circuit": {
+        "devices": {
+          "AMS1117-3.3": {
+            "pins": {
+              "GND": "1",
+              "OUT": "2",
+              "IN": "3"
+            }
+          }
+        },
+        "passives": {
+          "c_in": {
+            "type": "capacitor",
+            "value": "10uF"
+          },
+          "c_out": {
+            "type": "capacitor",
+            "value": "22uF"
+          }
+        },
+        "nets": {
+          "VIN": [
+            "AMS1117-3.3.IN",
+            "c_in.1"
+          ],
+          "GND": [
+            "AMS1117-3.3.GND",
+            "c_in.2",
+            "c_out.2"
+          ],
+          "+3V3": [
+            "AMS1117-3.3.OUT",
+            "c_out.1"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 3.53,
+      "model_error": null
+    },
+    {
+      "case": "blinker",
+      "trial": 1,
+      "validated": true,
+      "rounds": 1,
+      "validation_errors": [],
+      "structural_problems": [],
+      "instruction_conflicts": [
+        "the request forbade batterys; the proposal added ['bat1']"
+      ],
+      "simulated": false,
+      "refusal": "the 555 stand-in is not trustworthy at this timescale, so there is no verdict about the design: a textbook 1 Hz astable measured 2.647 Hz on this bench",
+      "clauses": [],
+      "correct": null,
+      "circuit": {
+        "devices": {
+          "NE555D": {
+            "pins": {
+              "GND": "1",
+              "TRIG": "2",
+              "OUT": "3",
+              "RESET": "4",
+              "CTRL": "5",
+              "THRES": "6",
+              "DISCH": "7",
+              "VCC": "8"
+            }
+          },
+          "bat1": {
+            "kind": "battery",
+            "package": "BatteryHolder_AAA_1x",
+            "pins": {
+              "P": "1",
+              "N": "2"
+            }
+          }
+        },
+        "passives": {
+          "c_dec_vcc": {
+            "type": "capacitor",
+            "value": "100nF"
+          },
+          "c_ctrl": {
+            "type": "capacitor",
+            "value": "10nF"
+          },
+          "c_timing": {
+            "type": "capacitor",
+            "value": "10uF"
+          },
+          "r_ra": {
+            "type": "resistor",
+            "value": "100k"
+          },
+          "r_rb": {
+            "type": "resistor",
+            "value": "68k"
+          },
+          "r_led": {
+            "type": "resistor",
+            "value": "470"
+          },
+          "d_led": {
+            "type": "diode",
+            "value": "LED"
+          }
+        },
+        "nets": {
+          "+9V": [
+            "bat1.P",
+            "NE555D.VCC",
+            "NE555D.RESET",
+            "c_dec_vcc.1",
+            "r_ra.1"
+          ],
+          "GND": [
+            "bat1.N",
+            "NE555D.GND",
+            "c_dec_vcc.2",
+            "c_ctrl.2",
+            "c_timing.2",
+            "d_led.2"
+          ],
+          "CTRL": [
+            "NE555D.CTRL",
+            "c_ctrl.1"
+          ],
+          "TRIG_THRES": [
+            "NE555D.TRIG",
+            "NE555D.THRES",
+            "r_rb.2",
+            "c_timing.1"
+          ],
+          "DISCH": [
+            "NE555D.DISCH",
+            "r_ra.2",
+            "r_rb.1"
+          ],
+          "OUT": [
+            "NE555D.OUT",
+            "r_led.1"
+          ],
+          "LED_ANODE": [
+            "r_led.2",
+            "d_led.1"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 4.24,
+      "model_error": null
+    },
+    {
+      "case": "ref25",
+      "trial": 1,
+      "validated": true,
+      "rounds": 1,
+      "validation_errors": [],
+      "structural_problems": [],
+      "instruction_conflicts": [
+        "the request forbade connectors; the proposal added ['power_in']"
+      ],
+      "simulated": true,
+      "refusal": null,
+      "clauses": [
+        {
+          "name": "follower output is 2.5 V",
+          "passed": true,
+          "measured": 2.499974975247595,
+          "expected": 2.5,
+          "op": "within",
+          "unit": "V",
+          "margin": -2.5024752404956274e-05,
+          "error": null
+        }
+      ],
+      "correct": true,
+      "circuit": {
+        "devices": {
+          "LM358D": {
+            "pins": {
+              "OUT1": "1",
+              "IN1-": "2",
+              "IN1+": "3",
+              "GND": "4",
+              "IN2+": "5",
+              "IN2-": "6",
+              "OUT2": "7",
+              "VCC": "8"
+            }
+          },
+          "power_in": {
+            "kind": "connector",
+            "package": "PinHeader_1x02_P2.54mm",
+            "pins": {
+              "1": "1",
+              "2": "2"
+            }
+          }
+        },
+        "passives": {
+          "c_dec_vcc": {
+            "type": "capacitor",
+            "value": "100nF"
+          },
+          "r_div1": {
+            "type": "resistor",
+            "value": "10k"
+          },
+          "r_div2": {
+            "type": "resistor",
+            "value": "10k"
+          },
+          "r_unused_in": {
+            "type": "resistor",
+            "value": "10k"
+          }
+        },
+        "nets": {
+          "+5V": [
+            "power_in.1",
+            "LM358D.VCC",
+            "c_dec_vcc.1",
+            "r_div1.1"
+          ],
+          "GND": [
+            "power_in.2",
+            "LM358D.GND",
+            "c_dec_vcc.2",
+            "r_div2.2",
+            "r_unused_in.2"
+          ],
+          "DIV_OUT": [
+            "r_div1.2",
+            "r_div2.1",
+            "LM358D.IN1+"
+          ],
+          "REF_OUT": [
+            "LM358D.OUT1",
+            "LM358D.IN1-"
+          ],
+          "UNUSED_IN": [
+            "LM358D.IN2+",
+            "r_unused_in.1"
+          ],
+          "UNUSED_FB": [
+            "LM358D.IN2-",
+            "LM358D.OUT2"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 4.38,
+      "model_error": null
+    },
+    {
+      "case": "attiny",
+      "trial": 1,
+      "validated": true,
+      "rounds": 1,
+      "validation_errors": [],
+      "structural_problems": [],
+      "instruction_conflicts": [
+        "the request forbade connectors; the proposal added ['power_in']"
+      ],
+      "simulated": false,
+      "refusal": "a microcontroller's behaviour is its firmware; no SPICE model of it exists, here or anywhere (registry._REFUSALS)",
+      "clauses": [],
+      "correct": null,
+      "circuit": {
+        "devices": {
+          "ATtiny85-20SU": {
+            "pins": {
+              "PB5": "1",
+              "PB3": "2",
+              "PB4": "3",
+              "GND": "4",
+              "PB1": "5",
+              "PB0": "6",
+              "PB2": "7",
+              "VCC": "8"
+            }
+          },
+          "power_in": {
+            "kind": "connector",
+            "package": "PinHeader_1x02_P2.54mm",
+            "pins": {
+              "1": "1",
+              "2": "2"
+            }
+          }
+        },
+        "passives": {
+          "c_dec_vcc": {
+            "type": "capacitor",
+            "value": "100nF"
+          },
+          "c_bulk": {
+            "type": "capacitor",
+            "value": "10uF"
+          },
+          "r_reset": {
+            "type": "resistor",
+            "value": "10k"
+          },
+          "r_led": {
+            "type": "resistor",
+            "value": "330"
+          },
+          "d_status": {
+            "type": "diode",
+            "value": "LED"
+          }
+        },
+        "nets": {
+          "+5V": [
+            "power_in.1",
+            "ATtiny85-20SU.VCC",
+            "c_dec_vcc.1",
+            "c_bulk.1",
+            "r_reset.1"
+          ],
+          "GND": [
+            "power_in.2",
+            "ATtiny85-20SU.GND",
+            "c_dec_vcc.2",
+            "c_bulk.2",
+            "d_status.2"
+          ],
+          "RESET": [
+            "ATtiny85-20SU.PB5",
+            "r_reset.2"
+          ],
+          "PB1_LED": [
+            "ATtiny85-20SU.PB1",
+            "r_led.1"
+          ],
+          "LED_ANODE": [
+            "r_led.2",
+            "d_status.1"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 9.61,
+      "model_error": null
+    },
+    {
+      "case": "barrel_ldo",
+      "trial": 1,
+      "validated": true,
+      "rounds": 3,
+      "validation_errors": [
+        "net 'SPARE1' has 1 endpoint(s); a net joining fewer than 2 pins is not a connection",
+        "net 'SPARE2' has 1 endpoint(s); a net joining fewer than 2 pins is not a connection",
+        "pin 'r_spare1.1' is on 2 nets (+3V3, SPARE1); a pin joins exactly one net -- if these are the same node, merge them into one net",
+        "pin 'r_spare2.1' is on 2 nets (+3V3, SPARE2); a pin joins exactly one net -- if these are the same node, merge them into one net"
+      ],
+      "structural_problems": [],
+      "instruction_conflicts": [],
+      "simulated": true,
+      "refusal": null,
+      "clauses": [
+        {
+          "name": "rail is 3.3 V at 10 mA",
+          "passed": true,
+          "measured": 3.299500075745275,
+          "expected": 3.3,
+          "op": "within",
+          "unit": "V",
+          "margin": -0.0004999242547247817,
+          "error": null
+        },
+        {
+          "name": "rail never exceeds nameplate + 10%",
+          "passed": true,
+          "measured": 3.299500075745275,
+          "expected": 3.63,
+          "op": "<=",
+          "unit": "V",
+          "margin": 0.33049992425472485,
+          "error": null
+        }
+      ],
+      "correct": true,
+      "circuit": {
+        "devices": {
+          "AMS1117-3.3": {
+            "pins": {
+              "GND": "1",
+              "VO": "2",
+              "VI": "3"
+            }
+          },
+          "barrel_jack": {
+            "kind": "connector",
+            "package": "Barrel_Jack_5.5x2.1mm",
+            "pins": {
+              "PLUS": "1",
+              "MINUS": "2"
+            }
+          },
+          "output_terminal": {
+            "kind": "connector",
+            "package": "TerminalBlock_2P_5.08mm",
+            "pins": {
+              "1": "1",
+              "2": "2"
+            }
+          },
+          "breakout_header": {
+            "kind": "connector",
+            "package": "PinHeader_1x04_P2.54mm",
+            "pins": {
+              "1": "1",
+              "2": "2",
+              "3": "3",
+              "4": "4"
+            }
+          },
+          "test_point": {
+            "kind": "connector",
+            "package": "PinHeader_1x02_P2.54mm",
+            "pins": {
+              "1": "1",
+              "2": "2"
+            }
+          }
+        },
+        "passives": {
+          "c_in_bulk": {
+            "type": "capacitor",
+            "value": "10uF"
+          },
+          "c_out_bulk": {
+            "type": "capacitor",
+            "value": "22uF"
+          },
+          "r_spare1": {
+            "type": "resistor",
+            "value": "10k"
+          },
+          "r_spare2": {
+            "type": "resistor",
+            "value": "10k"
+          }
+        },
+        "nets": {
+          "VIN": [
+            "barrel_jack.PLUS",
+            "AMS1117-3.3.VI",
+            "c_in_bulk.1"
+          ],
+          "GND": [
+            "barrel_jack.MINUS",
+            "AMS1117-3.3.GND",
+            "output_terminal.2",
+            "breakout_header.4",
+            "test_point.2",
+            "c_in_bulk.2",
+            "c_out_bulk.2"
+          ],
+          "+3V3": [
+            "AMS1117-3.3.VO",
+            "output_terminal.1",
+            "breakout_header.1",
+            "test_point.1",
+            "c_out_bulk.1",
+            "r_spare1.2",
+            "r_spare2.2"
+          ],
+          "SPARE1": [
+            "breakout_header.2",
+            "r_spare1.1"
+          ],
+          "SPARE2": [
+            "breakout_header.3",
+            "r_spare2.1"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 31.72,
+      "model_error": null
+    },
+    {
+      "case": "usbc_ldo",
+      "trial": 1,
+      "validated": true,
+      "rounds": 2,
+      "validation_errors": [
+        "net 'TX_RX' has 1 endpoint(s); a net joining fewer than 2 pins is not a connection"
+      ],
+      "structural_problems": [],
+      "instruction_conflicts": [],
+      "simulated": false,
+      "refusal": "UnsimulatableError: cannot simulate SW_SPST_TL3305A: a device in the Silkscreen IR is a pin map with no behaviour. Supply Testbench.models[name] = SubcircuitModel(...) with the part's SPICE model to simulate it",
+      "clauses": [],
+      "correct": null,
+      "circuit": {
+        "devices": {
+          "USB_C_Receptacle_Power": {
+            "kind": "connector",
+            "package": "USB_C_Receptacle_Power",
+            "pins": {
+              "VBUS": "A4",
+              "GND": "A1",
+              "CC1": "A5",
+              "CC2": "B5",
+              "SHIELD": "S1"
+            }
+          },
+          "AMS1117-3.3": {
+            "pins": {
+              "GND": "1",
+              "OUT": "2",
+              "IN": "3"
+            }
+          },
+          "SW_SPST_TL3305A": {
+            "kind": "switch",
+            "package": "SW_SPST_TL3305A",
+            "pins": {
+              "1": "1",
+              "2": "2"
+            }
+          },
+          "PinHeader_1x04_P2.54mm": {
+            "kind": "connector",
+            "package": "PinHeader_1x04_P2.54mm",
+            "pins": {
+              "1": "1",
+              "2": "2",
+              "3": "3",
+              "4": "4"
+            }
+          }
+        },
+        "passives": {
+          "c_cc1": {
+            "type": "resistor",
+            "value": "5.1k"
+          },
+          "c_cc2": {
+            "type": "resistor",
+            "value": "5.1k"
+          },
+          "c_in": {
+            "type": "capacitor",
+            "value": "10uF"
+          },
+          "c_out": {
+            "type": "capacitor",
+            "value": "22uF"
+          },
+          "r_rst": {
+            "type": "resistor",
+            "value": "10k"
+          },
+          "r_dummy": {
+            "type": "resistor",
+            "value": "10k"
+          }
+        },
+        "nets": {
+          "GND": [
+            "USB_C_Receptacle_Power.GND",
+            "USB_C_Receptacle_Power.SHIELD",
+            "AMS1117-3.3.GND",
+            "c_cc1.2",
+            "c_cc2.2",
+            "c_in.2",
+            "c_out.2",
+            "SW_SPST_TL3305A.2",
+            "PinHeader_1x04_P2.54mm.4",
+            "r_dummy.2"
+          ],
+          "VIN": [
+            "USB_C_Receptacle_Power.VBUS",
+            "AMS1117-3.3.IN",
+            "c_in.1"
+          ],
+          "+3V3": [
+            "AMS1117-3.3.OUT",
+            "c_out.1",
+            "r_rst.1",
+            "PinHeader_1x04_P2.54mm.1"
+          ],
+          "CC1": [
+            "USB_C_Receptacle_Power.CC1",
+            "c_cc1.1"
+          ],
+          "CC2": [
+            "USB_C_Receptacle_Power.CC2",
+            "c_cc2.1"
+          ],
+          "NRST": [
+            "r_rst.2",
+            "SW_SPST_TL3305A.1",
+            "PinHeader_1x04_P2.54mm.2"
+          ],
+          "AUX_SIGNAL": [
+            "PinHeader_1x04_P2.54mm.3",
+            "r_dummy.1"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 9.89,
+      "model_error": null
+    },
+    {
+      "case": "ldo5v",
+      "trial": 1,
+      "validated": true,
+      "rounds": 1,
+      "validation_errors": [],
+      "structural_problems": [],
+      "instruction_conflicts": [],
+      "simulated": true,
+      "refusal": null,
+      "clauses": [
+        {
+          "name": "rail is 5 V at 10 mA",
+          "passed": true,
+          "measured": 4.999500049994751,
+          "expected": 5.0,
+          "op": "within",
+          "unit": "V",
+          "margin": -0.0004999500052491612,
+          "error": null
+        },
+        {
+          "name": "rail never exceeds nameplate + 10%",
+          "passed": true,
+          "measured": 4.999500049994752,
+          "expected": 5.5,
+          "op": "<=",
+          "unit": "V",
+          "margin": 0.5004999500052483,
+          "error": null
+        }
+      ],
+      "correct": true,
+      "circuit": {
+        "devices": {
+          "TerminalBlock_2P_5.08mm": {
+            "kind": "connector",
+            "package": "TerminalBlock_2P_5.08mm",
+            "pins": {
+              "1": "1",
+              "2": "2"
+            }
+          },
+          "PinHeader_1x02_P2.54mm": {
+            "kind": "connector",
+            "package": "PinHeader_1x02_P2.54mm",
+            "pins": {
+              "1": "1",
+              "2": "2"
+            }
+          },
+          "AMS1117-5.0": {
+            "pins": {
+              "GND": "1",
+              "VOUT": "2",
+              "VIN": "3"
+            }
+          }
+        },
+        "passives": {
+          "c_in": {
+            "type": "capacitor",
+            "value": "10uF"
+          },
+          "c_out": {
+            "type": "capacitor",
+            "value": "22uF"
+          }
+        },
+        "nets": {
+          "VIN": [
+            "TerminalBlock_2P_5.08mm.1",
+            "c_in.1",
+            "AMS1117-5.0.VIN"
+          ],
+          "GND": [
+            "TerminalBlock_2P_5.08mm.2",
+            "c_in.2",
+            "AMS1117-5.0.GND",
+            "c_out.2",
+            "PinHeader_1x02_P2.54mm.2"
+          ],
+          "+5V": [
+            "AMS1117-5.0.VOUT",
+            "c_out.1",
+            "PinHeader_1x02_P2.54mm.1"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 3.55,
+      "model_error": null
+    },
+    {
+      "case": "blinker10",
+      "trial": 1,
+      "validated": true,
+      "rounds": 1,
+      "validation_errors": [],
+      "structural_problems": [],
+      "instruction_conflicts": [],
+      "simulated": true,
+      "refusal": null,
+      "clauses": [
+        {
+          "name": "oscillates no slower than 5 Hz",
+          "passed": false,
+          "measured": null,
+          "expected": 5.0,
+          "op": ">=",
+          "unit": "Hz",
+          "margin": null,
+          "error": "'OUT_NET' is flat at 3.3 over the window; it does not oscillate, so it has no period"
+        },
+        {
+          "name": "oscillates no faster than 20 Hz",
+          "passed": false,
+          "measured": null,
+          "expected": 20.0,
+          "op": "<=",
+          "unit": "Hz",
+          "margin": null,
+          "error": "'OUT_NET' is flat at 3.3 over the window; it does not oscillate, so it has no period"
+        },
+        {
+          "name": "output actually swings most of the supply",
+          "passed": false,
+          "measured": 0.0,
+          "expected": 2.5,
+          "op": ">=",
+          "unit": "V",
+          "margin": -2.5,
+          "error": null
+        }
+      ],
+      "correct": false,
+      "circuit": {
+        "devices": {
+          "NE555D": {
+            "pins": {
+              "GND": "1",
+              "TRIG": "2",
+              "OUT": "3",
+              "RESET": "4",
+              "CTRL": "5",
+              "THRES": "6",
+              "DISCH": "7",
+              "VCC": "8"
+            }
+          },
+          "bat_in": {
+            "kind": "battery",
+            "package": "BatteryHolder_AAA_1x",
+            "pins": {
+              "P": "1",
+              "N": "2"
+            }
+          },
+          "led_conn": {
+            "kind": "connector",
+            "package": "JST_PH_2P",
+            "pins": {
+              "1": "1",
+              "2": "2"
+            }
+          }
+        },
+        "passives": {
+          "c_dec_vcc_ne555d": {
+            "type": "capacitor",
+            "value": "100nF"
+          },
+          "c_ctrl_ne555d": {
+            "type": "capacitor",
+            "value": "10nF"
+          },
+          "c_timing": {
+            "type": "capacitor",
+            "value": "10uF"
+          },
+          "r_ra": {
+            "type": "resistor",
+            "value": "1k"
+          },
+          "r_rb": {
+            "type": "resistor",
+            "value": "68k"
+          },
+          "r_led": {
+            "type": "resistor",
+            "value": "330"
+          },
+          "c_bulk": {
+            "type": "capacitor",
+            "value": "10uF"
+          }
+        },
+        "nets": {
+          "+5V": [
+            "bat_in.P",
+            "NE555D.VCC",
+            "NE555D.RESET",
+            "c_dec_vcc_ne555d.1",
+            "c_bulk.1",
+            "r_ra.1"
+          ],
+          "GND": [
+            "bat_in.N",
+            "NE555D.GND",
+            "c_dec_vcc_ne555d.2",
+            "c_ctrl_ne555d.2",
+            "c_timing.2",
+            "c_bulk.2",
+            "led_conn.2"
+          ],
+          "TRIG_THRES": [
+            "NE555D.TRIG",
+            "NE555D.THRES",
+            "c_timing.1",
+            "r_rb.2"
+          ],
+          "DISCH": [
+            "NE555D.DISCH",
+            "r_ra.2",
+            "r_rb.1"
+          ],
+          "CTRL_NET": [
+            "NE555D.CTRL",
+            "c_ctrl_ne555d.1"
+          ],
+          "OUT_NET": [
+            "NE555D.OUT",
+            "r_led.1"
+          ],
+          "LED_DRIVE": [
+            "r_led.2",
+            "led_conn.1"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 4.25,
+      "model_error": null
+    },
+    {
+      "case": "halfrail",
+      "trial": 1,
+      "validated": true,
+      "rounds": 2,
+      "validation_errors": [
+        "net 'net_unused_out' has 1 endpoint(s); a net joining fewer than 2 pins is not a connection"
+      ],
+      "structural_problems": [],
+      "instruction_conflicts": [],
+      "simulated": false,
+      "refusal": "no single op-amp in the proposal",
+      "clauses": [],
+      "correct": null,
+      "circuit": {
+        "devices": {
+          "BatteryHolder_AAA_1x": {
+            "kind": "battery",
+            "package": "BatteryHolder_AAA_1x",
+            "pins": {
+              "P": "1",
+              "N": "2"
+            }
+          },
+          "JST_PH_2P": {
+            "kind": "connector",
+            "package": "JST_PH_2P",
+            "pins": {
+              "1": "1",
+              "2": "2"
+            }
+          },
+          "PinHeader_1x03_P2.54mm": {
+            "kind": "connector",
+            "package": "PinHeader_1x03_P2.54mm",
+            "pins": {
+              "1": "1",
+              "2": "2",
+              "3": "3"
+            }
+          },
+          "TL072": {
+            "pins": {
+              "OUTA": "1",
+              "INA_MINUS": "2",
+              "INA_PLUS": "3",
+              "VEE": "4",
+              "INB_PLUS": "5",
+              "INB_MINUS": "6",
+              "OUTB": "7",
+              "VCC": "8"
+            }
+          }
+        },
+        "passives": {
+          "c_dec_vdd_tl072": {
+            "type": "capacitor",
+            "value": "100nF"
+          },
+          "r_div1": {
+            "type": "resistor",
+            "value": "10k"
+          },
+          "r_div2": {
+            "type": "resistor",
+            "value": "10k"
+          },
+          "r_unused_in": {
+            "type": "resistor",
+            "value": "10k"
+          },
+          "r_unused_out": {
+            "type": "resistor",
+            "value": "10k"
+          }
+        },
+        "nets": {
+          "+3V3": [
+            "BatteryHolder_AAA_1x.P",
+            "JST_PH_2P.1",
+            "TL072.VCC",
+            "c_dec_vdd_tl072.1",
+            "r_div1.1",
+            "PinHeader_1x03_P2.54mm.1"
+          ],
+          "GND": [
+            "BatteryHolder_AAA_1x.N",
+            "JST_PH_2P.2",
+            "TL072.VEE",
+            "c_dec_vdd_tl072.2",
+            "r_div2.2",
+            "r_unused_in.2",
+            "r_unused_out.2",
+            "PinHeader_1x03_P2.54mm.3"
+          ],
+          "+1V65": [
+            "r_div1.2",
+            "r_div2.1",
+            "TL072.INA_PLUS",
+            "PinHeader_1x03_P2.54mm.2"
+          ],
+          "net_buf_feedback": [
+            "TL072.OUTA",
+            "TL072.INA_MINUS"
+          ],
+          "net_unused_b": [
+            "TL072.INB_PLUS",
+            "TL072.INB_MINUS",
+            "r_unused_in.1"
+          ],
+          "net_unused_out": [
+            "TL072.OUTB",
+            "r_unused_out.1"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 19.61,
+      "model_error": null
+    }
+  ]
+}

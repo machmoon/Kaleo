@@ -1,0 +1,154 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for the main window on macOS, including Ada wake (ada-wake). http:default is scoped to what the Engine page accepts (pages/engine/components/EngineConnection.tsx validateEngineBaseUrl): plain http only on loopback, and any https origin for a deployed engine behind its bearer token -- the app has no allowlist of deployed hosts, so the https scope cannot be narrower than the setting.",
+  "windows": [
+    "main",
+    "dashboard"
+  ],
+  "platforms": [
+    "macOS"
+  ],
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "core:event:allow-listen",
+      "allow": [
+        {
+          "event": "ada-wake"
+        },
+        {
+          "event": "ada-wake-error"
+        },
+        {
+          "event": "tray-ada-toggle"
+        },
+        {
+          "event": "kaleo-setup-changed"
+        }
+      ]
+    },
+    "opener:default",
+    "macos-permissions:default",
+    "global-shortcut:allow-is-registered",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
+    "shell:allow-open",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-position",
+    "autostart:allow-enable",
+    "autostart:allow-disable",
+    "autostart:allow-is-enabled",
+    "dialog:default",
+    "fs:allow-write-text-file",
+    "fs:allow-read-text-file",
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": [
+        {
+          "path": "$TEMP/silkscreen-steps/**"
+        },
+        {
+          "path": "$HOME/.kaleo/*.env"
+        },
+        {
+          "path": "$HOME/**/*.glb"
+        }
+      ]
+    },
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        {
+          "path": "$HOME/**/*.kicad_pcb"
+        },
+        {
+          "path": "$HOME/*.kicad_pcb"
+        },
+        {
+          "path": "$HOME/**/*.zip"
+        },
+        {
+          "path": "$HOME/*.zip"
+        },
+        {
+          "path": "$TEMP/**/*.zip"
+        },
+        {
+          "path": "$TEMP/*.zip"
+        },
+        {
+          "path": "$HOME/**/*.glb"
+        },
+        {
+          "path": "$HOME/*.glb"
+        },
+        {
+          "path": "$TEMP/**/*.glb"
+        },
+        {
+          "path": "$TEMP/*.glb"
+        },
+        {
+          "path": "$HOME/**/*.step"
+        },
+        {
+          "path": "$HOME/*.step"
+        },
+        {
+          "path": "$TEMP/**/*.step"
+        },
+        {
+          "path": "$TEMP/*.step"
+        },
+        {
+          "path": "$HOME/**/*.json"
+        },
+        {
+          "path": "$HOME/*.json"
+        },
+        {
+          "path": "$TEMP/**/*.json"
+        },
+        {
+          "path": "$TEMP/*.json"
+        }
+      ]
+    },
+    {
+      "identifier": "http:default",
+      "allow": [
+        {
+          "url": "http://127.0.0.1:*"
+        },
+        {
+          "url": "http://127.0.0.1:*/*"
+        },
+        {
+          "url": "http://localhost:*"
+        },
+        {
+          "url": "http://localhost:*/*"
+        },
+        {
+          "url": "https://*"
+        },
+        {
+          "url": "https://*/*"
+        },
+        {
+          "url": "https://*:*"
+        },
+        {
+          "url": "https://*:*/*"
+        }
+      ]
+    },
+    "notification:allow-notify",
+    "notification:allow-is-permission-granted",
+    "notification:allow-request-permission",
+    "store:allow-load",
+    "store:allow-get",
+    "store:allow-set"
+  ]
+}

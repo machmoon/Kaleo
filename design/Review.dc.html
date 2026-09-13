@@ -1,0 +1,146 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chivo:wght@300;400;500;600;700&family=Chivo+Mono:wght@400;500;600&display=swap">
+  <style>
+    body { margin:0; font-family:"Chivo","Helvetica Neue",Arial,sans-serif; }
+    a { color:#000084; } a:hover { color:#840000; }
+    .lbl { font-family:"Chivo Mono",ui-monospace,monospace; font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:#7C796E; }
+    .mono { font-family:"Chivo Mono",ui-monospace,monospace; font-variant-numeric:tabular-nums; }
+    .cite { display:flex; align-items:center; gap:6px; font-family:"Chivo Mono",monospace; font-size:10.5px; color:#7C796E; }
+  </style>
+</helmet>
+
+<div style="width:1440px; height:900px; display:flex; flex-direction:column; background:#F5F4EF; color:#14130F; overflow:hidden;">
+
+  <div style="height:44px; display:flex; align-items:center; border-bottom:1px solid #B5B5B5; background:#FCFBF8; flex-shrink:0;">
+    <div style="display:flex; align-items:center; gap:9px; padding:0 16px; border-right:1px solid #D6D3C8; height:100%;">
+      <svg width="17" height="17" viewBox="0 0 512 512"><rect x="32" y="32" width="448" height="448" rx="110" fill="#1E6A48"/><g fill="none" stroke="#D68C42" stroke-width="44" stroke-linejoin="round"><path d="M164.5 124.5 V386.5"/><path d="M349.5 124.5 L164.5 256 L359.5 386.5"/></g><g fill="#D68C42"><circle cx="164.5" cy="124.5" r="38.5"/><circle cx="164.5" cy="386.5" r="38.5"/><circle cx="349.5" cy="124.5" r="38.5"/><circle cx="359.5" cy="386.5" r="38.5"/></g><g fill="#1E6A48"><circle cx="164.5" cy="124.5" r="17.5"/><circle cx="164.5" cy="386.5" r="17.5"/><circle cx="349.5" cy="124.5" r="17.5"/><circle cx="359.5" cy="386.5" r="17.5"/></g></svg>
+      <span style="font-weight:600; font-size:14px;">Kaleo</span>
+    </div>
+    <span style="font-size:12.5px; color:#484848; padding:0 12px;">stepper-driver-v2</span>
+    <div style="flex-grow:1;"></div>
+    <span class="mono" style="font-size:10.5px; color:#7C796E; padding:0 16px;">reviewed 3 datasheets &middot; 41 s</span>
+  </div>
+
+  <div style="flex-grow:1; display:flex; min-height:0;">
+
+    <!-- findings list -->
+    <div style="flex-grow:1; padding:26px 34px; overflow:hidden; min-width:0;">
+
+      <div style="display:flex; align-items:baseline; gap:14px; margin-bottom:4px;">
+        <h1 style="font-size:25px; font-weight:600; letter-spacing:-.02em; margin:0;">Design review</h1>
+        <span class="mono" style="font-size:12px; color:#7C796E;">4 findings</span>
+      </div>
+      <p style="font-size:13.5px; color:#484848; margin:0 0 22px; max-width:66ch; line-height:1.55;">Every connection was checked against the pin definitions in the manufacturer's datasheet, not just against the netlist. Each finding cites the page it came from.</p>
+
+      <!-- double rule, drafting convention -->
+      <div style="border-top:1px solid #B5B5B5; margin-bottom:1px;"></div>
+      <div style="border-top:1px solid #B5B5B5; margin-bottom:20px;"></div>
+
+      <div style="display:flex; flex-direction:column; gap:16px;">
+
+        <!-- 1 -->
+        <div style="background:#FCFBF8; border:1px solid #D6D3C8; border-left:3px solid #E6090D; padding:15px 18px;">
+          <div style="display:flex; align-items:center; gap:11px; margin-bottom:7px;">
+            <span class="mono" style="font-size:9.5px; letter-spacing:.09em; text-transform:uppercase; color:#E6090D; background:#FBEAEA; padding:2px 7px;">will not work</span>
+            <span class="mono" style="font-size:11.5px; color:#006464;">U1 &middot; pin 44</span>
+          </div>
+          <div style="font-size:14.5px; font-weight:600; margin-bottom:6px; letter-spacing:-.005em;">BOOT0 is floating</div>
+          <div style="font-size:13px; color:#484848; line-height:1.6; margin-bottom:11px; max-width:76ch;">Nothing is connected to pin 44. On the STM32F030 this pin is sampled at every reset to choose the boot source, and a floating input will latch randomly &mdash; the board will boot to the bootloader on some power-ups and to your firmware on others. Tie it to GND through a 10&#8202;k&#8486; resistor.</div>
+          <div style="display:flex; align-items:center; gap:16px; padding-top:10px; border-top:1px solid #D6D3C8;">
+            <span class="cite"><svg width="11" height="13" viewBox="0 0 12 14" fill="none"><path d="M1 1h6l4 4v8H1z" stroke="#7C796E" stroke-width="1.2" stroke-linejoin="round"/><path d="M7 1v4h4" stroke="#7C796E" stroke-width="1.2"/></svg> STM32F030C8.pdf &middot; p.31, &sect;5.3.2</span>
+            <div style="flex-grow:1;"></div>
+            <button style="font-family:inherit; font-size:12px; font-weight:500; padding:6px 13px; background:#840000; color:#FCFBF8; border:none; border-radius:2px; cursor:pointer;">Add R6 10k to GND</button>
+          </div>
+        </div>
+
+        <!-- 2 -->
+        <div style="background:#FCFBF8; border:1px solid #D6D3C8; border-left:3px solid #E6090D; padding:15px 18px;">
+          <div style="display:flex; align-items:center; gap:11px; margin-bottom:7px;">
+            <span class="mono" style="font-size:9.5px; letter-spacing:.09em; text-transform:uppercase; color:#E6090D; background:#FBEAEA; padding:2px 7px;">will not work</span>
+            <span class="mono" style="font-size:11.5px; color:#006464;">U3 &middot; C4</span>
+          </div>
+          <div style="font-size:14.5px; font-weight:600; margin-bottom:6px; letter-spacing:-.005em;">Output capacitor is the wrong dielectric</div>
+          <div style="font-size:13px; color:#484848; line-height:1.6; margin-bottom:11px; max-width:76ch;">C4 is a 10&micro;F ceramic. The AMS1117 needs at least 22&micro;F of tantalum on its output; a ceramic's ESR is far below the 0.3&ndash;22&#8202;&Omega; the control loop needs, so the regulator will oscillate. C3 on the input is already 22&micro;F, which suggests the two got swapped.</div>
+          <div style="display:flex; align-items:center; gap:16px; padding-top:10px; border-top:1px solid #D6D3C8;">
+            <span class="cite"><svg width="11" height="13" viewBox="0 0 12 14" fill="none"><path d="M1 1h6l4 4v8H1z" stroke="#7C796E" stroke-width="1.2" stroke-linejoin="round"/><path d="M7 1v4h4" stroke="#7C796E" stroke-width="1.2"/></svg> AMS1117.pdf &middot; p.9, Table 2</span>
+            <div style="flex-grow:1;"></div>
+            <button style="font-family:inherit; font-size:12px; font-weight:500; padding:6px 13px; background:#840000; color:#FCFBF8; border:none; border-radius:2px; cursor:pointer;">Change to 22&micro;F tantalum</button>
+          </div>
+        </div>
+
+        <!-- 3 -->
+        <div style="background:#FCFBF8; border:1px solid #D6D3C8; border-left:3px solid #D19200; padding:15px 18px;">
+          <div style="display:flex; align-items:center; gap:11px; margin-bottom:7px;">
+            <span class="mono" style="font-size:9.5px; letter-spacing:.09em; text-transform:uppercase; color:#8A6300; background:#F7EFD8; padding:2px 7px;">marginal</span>
+            <span class="mono" style="font-size:11.5px; color:#006464;">U1 &middot; C7</span>
+          </div>
+          <div style="font-size:14.5px; font-weight:600; margin-bottom:6px; letter-spacing:-.005em;">Decoupling capacitor is 8.4&#8202;mm from the pin it bypasses</div>
+          <div style="font-size:13px; color:#484848; line-height:1.6; margin-bottom:11px; max-width:76ch;">C7 decouples V<sub>DD</sub> on pin 48, but the placer put it across the board. At that distance the loop inductance is roughly 12&#8202;nH, which makes the capacitor useless above about 4&#8202;MHz &mdash; well below the 48&#8202;MHz core clock it is meant to be filtering.</div>
+          <div style="display:flex; align-items:center; gap:16px; padding-top:10px; border-top:1px solid #D6D3C8;">
+            <span class="cite"><svg width="11" height="13" viewBox="0 0 12 14" fill="none"><path d="M1 1h6l4 4v8H1z" stroke="#7C796E" stroke-width="1.2" stroke-linejoin="round"/><path d="M7 1v4h4" stroke="#7C796E" stroke-width="1.2"/></svg> AN2586 &middot; p.14, &sect;3.1</span>
+            <div style="flex-grow:1;"></div>
+            <button style="font-family:inherit; font-size:12px; font-weight:500; padding:6px 13px; background:#840000; color:#FCFBF8; border:none; border-radius:2px; cursor:pointer;">Re-place near pin 48</button>
+          </div>
+        </div>
+
+        <!-- 4 -->
+        <div style="background:#FCFBF8; border:1px solid #D6D3C8; border-left:3px solid #725600; padding:15px 18px;">
+          <div style="display:flex; align-items:center; gap:11px; margin-bottom:7px;">
+            <span class="mono" style="font-size:9.5px; letter-spacing:.09em; text-transform:uppercase; color:#725600; background:#F2EDDC; padding:2px 7px;">sourcing</span>
+            <span class="mono" style="font-size:11.5px; color:#006464;">U2</span>
+          </div>
+          <div style="font-size:14.5px; font-weight:600; margin-bottom:6px; letter-spacing:-.005em;">DRV8838 is not stocked in this package</div>
+          <div style="font-size:13px; color:#484848; line-height:1.6; margin-bottom:11px; max-width:76ch;">The WSON-8 variant shows zero stock at your two configured suppliers, with a 22-week lead time. The DRV8837 is pin-compatible, in stock, and rated to 1.8&#8202;A &mdash; matching what your motor supply already assumes.</div>
+          <div style="display:flex; align-items:center; gap:16px; padding-top:10px; border-top:1px solid #D6D3C8;">
+            <span class="cite"><svg width="11" height="13" viewBox="0 0 12 14" fill="none"><path d="M1 1h6l4 4v8H1z" stroke="#7C796E" stroke-width="1.2" stroke-linejoin="round"/><path d="M7 1v4h4" stroke="#7C796E" stroke-width="1.2"/></svg> LCSC &middot; checked 4 min ago</span>
+            <div style="flex-grow:1;"></div>
+            <button style="font-family:inherit; font-size:12px; padding:6px 13px; background:transparent; color:#484848; border:1px solid #B5B5B5; border-radius:2px; cursor:pointer;">Compare DRV8837</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- right rail: what was checked -->
+    <div style="width:312px; border-left:1px solid #D6D3C8; background:#FAF9F5; flex-shrink:0; padding:26px 20px;">
+      <div class="lbl" style="margin-bottom:14px;">What was checked</div>
+
+      <div style="display:flex; flex-direction:column; gap:11px; margin-bottom:26px;">
+        <div style="display:flex; align-items:center; gap:9px;"><svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M2 7.5 L5.5 11 L12 3.5" stroke="#009600" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span style="font-size:12.5px; flex-grow:1;">Pin function vs. datasheet</span><span class="mono" style="font-size:10.5px; color:#7C796E;">54</span></div>
+        <div style="display:flex; align-items:center; gap:9px;"><svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M2 7.5 L5.5 11 L12 3.5" stroke="#009600" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span style="font-size:12.5px; flex-grow:1;">Passive values in context</span><span class="mono" style="font-size:10.5px; color:#7C796E;">8</span></div>
+        <div style="display:flex; align-items:center; gap:9px;"><svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M2 7.5 L5.5 11 L12 3.5" stroke="#009600" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span style="font-size:12.5px; flex-grow:1;">Decoupling proximity</span><span class="mono" style="font-size:10.5px; color:#7C796E;">6</span></div>
+        <div style="display:flex; align-items:center; gap:9px;"><svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M2 7.5 L5.5 11 L12 3.5" stroke="#009600" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span style="font-size:12.5px; flex-grow:1;">Part availability</span><span class="mono" style="font-size:10.5px; color:#7C796E;">12</span></div>
+      </div>
+
+      <div class="lbl" style="margin-bottom:12px; padding-top:18px; border-top:1px solid #D6D3C8;">Not checked</div>
+      <div style="font-size:12.5px; color:#7C796E; line-height:1.65;">Signal integrity, EMC, thermal margins, and manufacturability at your fab. A clean review here is not a substitute for a human sign-off before you order boards.</div>
+
+      <div style="margin-top:26px; padding-top:18px; border-top:1px solid #D6D3C8;">
+        <div class="lbl" style="margin-bottom:9px;">Datasheets read</div>
+        <div style="display:flex; flex-direction:column; gap:7px;">
+          <div class="mono" style="font-size:11px; color:#484848;">STM32F030C8 &middot; 122 pp</div>
+          <div class="mono" style="font-size:11px; color:#484848;">AMS1117 &middot; 14 pp</div>
+          <div class="mono" style="font-size:11px; color:#484848;">DRV8838 &middot; 33 pp</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="height:28px; border-top:1px solid #B5B5B5; background:#EDEBE3; display:flex; align-items:center; flex-shrink:0;">
+    <span class="lbl" style="padding:0 14px; border-right:1px solid #D6D3C8; color:#A9A69A;">Schematic</span>
+    <span class="lbl" style="padding:0 14px; border-right:1px solid #D6D3C8; color:#A9A69A;">Board</span>
+    <span class="lbl" style="padding:0 14px; border-right:1px solid #D6D3C8; color:#14130F;">Review &middot; 4</span>
+    <div style="flex-grow:1;"></div>
+    <span class="mono" style="font-size:10px; color:#7C796E; padding:0 16px 0 0;">2 fixes applied &middot; 2 pending</span>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

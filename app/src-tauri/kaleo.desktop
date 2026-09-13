@@ -1,0 +1,26 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Hardy
+Comment=Describe a circuit board in a sentence and watch it get designed, placed, routed and reviewed
+Exec=kaleo
+Icon=kaleo
+Terminal=false
+Categories=Development;Engineering;Electronics;
+Keywords=ai;pcb;electronics;eda;kicad;hardware;schematic;circuit;design;
+StartupNotify=true
+StartupWMClass=kaleo
+MimeType=audio/wav;audio/mp3;audio/ogg;
+
+# Permissions for microphone access
+X-GNOME-UsesNotifications=true
+X-KDE-SubstituteUID=false
+X-GNOME-SingleWindow=false
+
+# Flatpak permissions (if packaged as Flatpak)
+X-Flatpak-Permission=device=dri
+X-Flatpak-Permission=device=all
+X-Flatpak-Permission=socket=pulseaudio
+X-Flatpak-Permission=socket=fallback-x11
+X-Flatpak-Permission=socket=wayland
+X-Flatpak-Permission=env=PULSE_SERVER=unix:/run/user/1000/pulse/native

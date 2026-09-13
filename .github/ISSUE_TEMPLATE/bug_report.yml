@@ -1,0 +1,51 @@
+name: Bug report
+description: Something behaved differently from what the docs say
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A board file that reproduces the problem is worth more than any description.
+        If the output opened wrong in KiCad, attach the `.kicad_pcb` Silkscreen wrote.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, what you got. Paste the full command.
+      placeholder: |
+        $ python -m silkscreen "..." -o board.kicad_pcb
+        ...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part
+      options:
+        - Placement (packing.py)
+        - KiCad file read/write (kicad.py)
+        - Schematic emission (schematic.py)
+        - Routing (routing.py)
+        - Footprints / board emission
+        - Circuit IR (netlist.py)
+        - Model / agents layer
+        - Service or web UI
+        - MCP server
+        - Install / setup
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Python, OS, and commit
+      placeholder: "3.11.9, macOS 14, commit abc1234"
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before filing
+      options:
+        - label: "`python -m pytest -q` passes on my checkout (it needs no key, no network, and no KiCad)"
+        - label: I checked docs/install.md if this is an install or environment problem

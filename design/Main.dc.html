@@ -1,0 +1,204 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chivo:wght@300;400;500;600;700&family=Chivo+Mono:wght@400;500;600&display=swap">
+  <style>
+    body { margin:0; font-family:"Chivo","Helvetica Neue",Arial,sans-serif; }
+    a { color:#000084; } a:hover { color:#840000; }
+    .lbl { font-family:"Chivo Mono",ui-monospace,monospace; font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:#7C796E; }
+    .mono { font-family:"Chivo Mono",ui-monospace,monospace; font-variant-numeric:tabular-nums; }
+  </style>
+</helmet>
+
+<div style="width:1440px; height:900px; display:flex; flex-direction:column; background:#F5F4EF; color:#14130F; overflow:hidden; position:relative;">
+
+  <!-- paper grain -->
+  <svg width="0" height="0" style="position:absolute"><filter id="grain"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="3"/><feColorMatrix type="saturate" values="0"/></filter></svg>
+  <div style="position:absolute; inset:0; filter:url(#grain); opacity:.025; pointer-events:none; z-index:50;"></div>
+
+  <!-- ── title bar ─────────────────────────────────────────── -->
+  <div style="height:44px; display:flex; align-items:center; gap:0; border-bottom:1px solid #B5B5B5; background:#FCFBF8; flex-shrink:0;">
+    <div style="display:flex; align-items:center; gap:9px; padding:0 16px; border-right:1px solid #D6D3C8; height:100%;">
+      <svg width="17" height="17" viewBox="0 0 512 512"><rect x="32" y="32" width="448" height="448" rx="110" fill="#1E6A48"/><g fill="none" stroke="#D68C42" stroke-width="44" stroke-linejoin="round"><path d="M164.5 124.5 V386.5"/><path d="M349.5 124.5 L164.5 256 L359.5 386.5"/></g><g fill="#D68C42"><circle cx="164.5" cy="124.5" r="38.5"/><circle cx="164.5" cy="386.5" r="38.5"/><circle cx="349.5" cy="124.5" r="38.5"/><circle cx="359.5" cy="386.5" r="38.5"/></g><g fill="#1E6A48"><circle cx="164.5" cy="124.5" r="17.5"/><circle cx="164.5" cy="386.5" r="17.5"/><circle cx="349.5" cy="124.5" r="17.5"/><circle cx="359.5" cy="386.5" r="17.5"/></g></svg>
+      <span style="font-weight:600; font-size:14px; letter-spacing:-.01em;">Kaleo</span>
+    </div>
+    <div style="display:flex; align-items:center; gap:2px; padding:0 12px;">
+      <span style="font-size:12.5px; color:#484848;">stepper-driver-v2</span>
+      <span class="lbl" style="margin-left:10px; color:#A9A69A;">rev 4</span>
+    </div>
+    <div style="flex-grow:1;"></div>
+    <div style="display:flex; align-items:center; gap:8px; padding:0 14px; border-left:1px solid #D6D3C8; height:100%;">
+      <span style="width:6px; height:6px; border-radius:50%; background:#009600; display:block;"></span>
+      <span class="lbl">erc clean</span>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px; padding:0 14px; border-left:1px solid #D6D3C8; height:100%;">
+      <span style="width:6px; height:6px; border-radius:50%; background:#D19200; display:block;"></span>
+      <span class="lbl">4 findings</span>
+    </div>
+  </div>
+
+  <!-- ── body ──────────────────────────────────────────────── -->
+  <div style="flex-grow:1; display:flex; min-height:0;">
+
+    <!-- left: parts tree -->
+    <div style="width:252px; border-right:1px solid #D6D3C8; background:#FAF9F5; display:flex; flex-direction:column; flex-shrink:0;">
+      <div style="padding:12px 14px 8px; border-bottom:1px solid #D6D3C8;">
+        <div class="lbl" style="margin-bottom:2px;">Parts</div>
+        <div style="font-size:11px; color:#A9A69A;" class="mono">12 parts &middot; 54 nets</div>
+      </div>
+      <div style="flex-grow:1; overflow:hidden; padding:6px 0;">
+
+        <div style="display:flex; align-items:center; gap:9px; padding:6px 14px; background:#EDEBE3; border-left:2px solid #840000;">
+          <span class="mono" style="font-size:11.5px; font-weight:600; color:#840000; width:22px;">U1</span>
+          <span style="font-size:12.5px; flex-grow:1;">STM32F030C8Tx</span>
+          <span class="lbl" style="font-size:9px;">LQFP48</span>
+        </div>
+        <div style="padding:1px 0 4px 26px; border-left:1px solid #D6D3C8; margin-left:20px;">
+          <div style="display:flex; align-items:center; gap:9px; padding:3px 8px;"><span class="mono" style="font-size:11px; color:#006464; width:20px;">C1</span><span style="font-size:11.5px; color:#484848;">100nF</span></div>
+          <div style="display:flex; align-items:center; gap:9px; padding:3px 8px;"><span class="mono" style="font-size:11px; color:#006464; width:20px;">C2</span><span style="font-size:11.5px; color:#484848;">100nF</span></div>
+          <div style="display:flex; align-items:center; gap:9px; padding:3px 8px;"><span class="mono" style="font-size:11px; color:#006464; width:20px;">C7</span><span style="font-size:11.5px; color:#484848;">100nF</span><span style="width:5px;height:5px;border-radius:50%;background:#D19200;"></span></div>
+          <div style="display:flex; align-items:center; gap:9px; padding:3px 8px;"><span class="mono" style="font-size:11px; color:#006464; width:20px;">Y1</span><span style="font-size:11.5px; color:#484848;">8MHz</span></div>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:9px; padding:6px 14px;">
+          <span class="mono" style="font-size:11.5px; font-weight:600; color:#840000; width:22px;">U2</span>
+          <span style="font-size:12.5px; flex-grow:1;">DRV8838</span>
+          <span class="lbl" style="font-size:9px;">WSON8</span>
+        </div>
+        <div style="padding:1px 0 4px 26px; border-left:1px solid #D6D3C8; margin-left:20px;">
+          <div style="display:flex; align-items:center; gap:9px; padding:3px 8px;"><span class="mono" style="font-size:11px; color:#006464; width:20px;">C5</span><span style="font-size:11.5px; color:#484848;">10&micro;F</span></div>
+          <div style="display:flex; align-items:center; gap:9px; padding:3px 8px;"><span class="mono" style="font-size:11px; color:#006464; width:20px;">C6</span><span style="font-size:11.5px; color:#484848;">100nF</span></div>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:9px; padding:6px 14px;">
+          <span class="mono" style="font-size:11.5px; font-weight:600; color:#840000; width:22px;">U3</span>
+          <span style="font-size:12.5px; flex-grow:1;">AMS1117-3.3</span>
+          <span class="lbl" style="font-size:9px;">SOT223</span>
+        </div>
+        <div style="padding:1px 0 4px 26px; border-left:1px solid #D6D3C8; margin-left:20px;">
+          <div style="display:flex; align-items:center; gap:9px; padding:3px 8px;"><span class="mono" style="font-size:11px; color:#006464; width:20px;">C3</span><span style="font-size:11.5px; color:#484848;">22&micro;F</span></div>
+          <div style="display:flex; align-items:center; gap:9px; padding:3px 8px;"><span class="mono" style="font-size:11px; color:#006464; width:20px;">C4</span><span style="font-size:11.5px; color:#484848;">10&micro;F</span><span style="width:5px;height:5px;border-radius:50%;background:#E6090D;"></span></div>
+          <div style="display:flex; align-items:center; gap:9px; padding:3px 8px;"><span class="mono" style="font-size:11px; color:#006464; width:20px;">C8</span><span style="font-size:11.5px; color:#484848;">100nF</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- centre: schematic canvas -->
+    <div style="flex-grow:1; position:relative; background:#F5F4EF; background-image:radial-gradient(rgba(0,0,132,.09) 1px, transparent 1px); background-size:8px 8px; min-width:0;">
+
+      <!-- corner registration marks -->
+      <svg style="position:absolute; top:10px; left:10px;" width="10" height="10"><path d="M0 5h10M5 0v10" stroke="#A9A69A" stroke-width="1"/></svg>
+      <svg style="position:absolute; top:10px; right:10px;" width="10" height="10"><path d="M0 5h10M5 0v10" stroke="#A9A69A" stroke-width="1"/></svg>
+
+      <div style="position:absolute; top:14px; left:28px;" class="lbl">Schematic</div>
+
+      <svg width="100%" height="100%" viewBox="0 0 620 780" style="display:block;">
+        <!-- wires (KiCad green) -->
+        <g stroke="#009600" stroke-width="1.6" fill="none">
+          <path d="M180 250 H250"/><path d="M250 250 V190 H310"/>
+          <path d="M180 320 H250"/><path d="M250 320 V380 H310"/>
+          <path d="M430 190 H500 V300"/>
+          <path d="M430 380 H470 V470 H310"/>
+          <path d="M180 470 H250 V470"/>
+          <path d="M370 250 V300 H500"/>
+          <path d="M370 430 V470"/>
+        </g>
+        <!-- bus (navy) -->
+        <path d="M500 300 H560 V560 H370" stroke="#000084" stroke-width="2.6" fill="none"/>
+
+        <!-- junctions -->
+        <g fill="#009600"><circle cx="250" cy="250" r="3"/><circle cx="250" cy="320" r="3"/><circle cx="500" cy="300" r="3"/><circle cx="370" cy="470" r="3"/></g>
+
+        <!-- U1 -->
+        <rect x="310" y="160" width="120" height="120" fill="#FFFFC2" stroke="#840000" stroke-width="1.8"/>
+        <text x="370" y="150" text-anchor="middle" font-family="Chivo Mono, monospace" font-size="12" font-weight="600" fill="#006464">U1</text>
+        <text x="370" y="216" text-anchor="middle" font-family="Chivo, sans-serif" font-size="12.5" font-weight="600" fill="#840000">STM32F030</text>
+        <text x="370" y="233" text-anchor="middle" font-family="Chivo Mono, monospace" font-size="9.5" fill="#7C796E">C8Tx</text>
+        <g font-family="Chivo Mono, monospace" font-size="8.5" fill="#A90000">
+          <text x="303" y="192" text-anchor="end">48</text><text x="303" y="253" text-anchor="end">8</text><text x="437" y="192">44</text><text x="437" y="253">23</text>
+        </g>
+
+        <!-- U2 -->
+        <rect x="310" y="350" width="120" height="100" fill="#FFFFC2" stroke="#840000" stroke-width="1.8"/>
+        <text x="370" y="340" text-anchor="middle" font-family="Chivo Mono, monospace" font-size="12" font-weight="600" fill="#006464">U2</text>
+        <text x="370" y="398" text-anchor="middle" font-family="Chivo, sans-serif" font-size="12.5" font-weight="600" fill="#840000">DRV8838</text>
+        <text x="370" y="415" text-anchor="middle" font-family="Chivo Mono, monospace" font-size="9.5" fill="#7C796E">motor drv</text>
+
+        <!-- U3 with error halo -->
+        <circle cx="130" cy="470" r="46" fill="#E6090D" opacity=".07"/>
+        <rect x="80" y="430" width="100" height="80" fill="#FFFFC2" stroke="#E6090D" stroke-width="2.2"/>
+        <text x="130" y="422" text-anchor="middle" font-family="Chivo Mono, monospace" font-size="12" font-weight="600" fill="#006464">U3</text>
+        <text x="130" y="468" text-anchor="middle" font-family="Chivo, sans-serif" font-size="12" font-weight="600" fill="#840000">AMS1117</text>
+        <text x="130" y="484" text-anchor="middle" font-family="Chivo Mono, monospace" font-size="9.5" fill="#7C796E">3.3</text>
+
+        <!-- passives -->
+        <g stroke="#840000" stroke-width="1.6" fill="none">
+          <rect x="164" y="234" width="32" height="14" fill="#FFFFC2"/>
+          <path d="M164 313 h13 M183 313 h13 M177 305 v16 M183 305 v16"/>
+        </g>
+        <text x="180" y="228" text-anchor="middle" font-family="Chivo Mono, monospace" font-size="9.5" fill="#006464">R1 10k</text>
+        <text x="180" y="298" text-anchor="middle" font-family="Chivo Mono, monospace" font-size="9.5" fill="#006464">C7 100nF</text>
+
+        <!-- warning marker on C7 -->
+        <circle cx="200" cy="313" r="7" fill="none" stroke="#D19200" stroke-width="1.6"/>
+        <text x="200" y="317" text-anchor="middle" font-family="Chivo Mono, monospace" font-size="9" font-weight="600" fill="#D19200">!</text>
+
+        <!-- labels -->
+        <g font-family="Chivo Mono, monospace" font-size="9.5" fill="#725600">
+          <text x="510" y="295">+3V3</text><text x="255" y="245">NRST</text><text x="470" y="465">nSLEEP</text>
+        </g>
+      </svg>
+    </div>
+
+    <!-- right: inspector -->
+    <div style="width:308px; border-left:1px solid #D6D3C8; background:#FAF9F5; display:flex; flex-direction:column; flex-shrink:0;">
+      <div style="padding:12px 16px 10px; border-bottom:1px solid #D6D3C8;">
+        <div class="lbl" style="margin-bottom:4px;">Inspector</div>
+        <div style="font-size:15px; font-weight:600;">U3 &middot; AMS1117-3.3</div>
+      </div>
+
+      <div style="padding:14px 16px; border-bottom:1px solid #D6D3C8; display:flex; flex-direction:column; gap:9px;">
+        <div style="display:flex; justify-content:space-between;"><span class="lbl">Footprint</span><span class="mono" style="font-size:11.5px;">SOT-223-3</span></div>
+        <div style="display:flex; justify-content:space-between;"><span class="lbl">V<sub>out</sub></span><span class="mono" style="font-size:11.5px;">3.30 V</span></div>
+        <div style="display:flex; justify-content:space-between;"><span class="lbl">I<sub>max</sub></span><span class="mono" style="font-size:11.5px;">800 mA</span></div>
+        <div style="display:flex; justify-content:space-between;"><span class="lbl">Dropout</span><span class="mono" style="font-size:11.5px;">1.30 V</span></div>
+        <div style="display:flex; justify-content:space-between;"><span class="lbl">Stock</span><span class="mono" style="font-size:11.5px; color:#009600;">18,420 @ LCSC</span></div>
+      </div>
+
+      <div style="padding:13px 16px 8px;">
+        <div class="lbl" style="color:#E6090D; margin-bottom:9px;">1 error on this part</div>
+        <div style="border:1px solid #E6090D; border-left:3px solid #E6090D; background:#FCFBF8; padding:11px 12px;">
+          <div style="font-size:12.5px; font-weight:600; margin-bottom:5px; line-height:1.35;">Output capacitor too small for stability</div>
+          <div style="font-size:12px; color:#484848; line-height:1.5; margin-bottom:8px;">C4 is 10&micro;F ceramic. The datasheet specifies a minimum 22&micro;F tantalum on V<sub>out</sub>; ceramic ESR is too low to keep the regulator loop stable.</div>
+          <div style="display:flex; align-items:center; gap:7px; padding-top:8px; border-top:1px solid #D6D3C8;">
+            <svg width="11" height="13" viewBox="0 0 12 14" fill="none"><path d="M1 1h6l4 4v8H1z" stroke="#7C796E" stroke-width="1.2" stroke-linejoin="round"/><path d="M7 1v4h4" stroke="#7C796E" stroke-width="1.2"/></svg>
+            <span class="mono" style="font-size:10.5px; color:#7C796E;">AMS1117.pdf &middot; p.9, Table 2</span>
+          </div>
+        </div>
+        <div style="display:flex; gap:7px; margin-top:11px;">
+          <button style="flex-grow:1; font-family:inherit; font-size:12px; font-weight:500; padding:7px 12px; background:#840000; color:#FCFBF8; border:none; border-radius:2px; cursor:pointer;">Change to 22&micro;F tantalum</button>
+          <button style="font-family:inherit; font-size:12px; padding:7px 12px; background:transparent; color:#484848; border:1px solid #B5B5B5; border-radius:2px; cursor:pointer;">Dismiss</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── status bar ───────────────────────────────────────── -->
+  <div style="height:28px; border-top:1px solid #B5B5B5; background:#EDEBE3; display:flex; align-items:center; gap:0; flex-shrink:0;">
+    <span class="lbl" style="padding:0 14px; border-right:1px solid #D6D3C8;">Schematic</span>
+    <span class="lbl" style="padding:0 14px; border-right:1px solid #D6D3C8; color:#A9A69A;">Board</span>
+    <span class="lbl" style="padding:0 14px; border-right:1px solid #D6D3C8; color:#A9A69A;">Review &middot; 4</span>
+    <div style="flex-grow:1;"></div>
+    <span class="mono" style="font-size:10px; color:#7C796E; padding:0 14px;">gemini&middot;3.7&#8209;flash</span>
+    <span class="mono" style="font-size:10px; color:#7C796E; padding:0 16px 0 0;">x 142.24  y 88.90</span>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

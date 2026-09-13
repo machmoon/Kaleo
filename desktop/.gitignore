@@ -1,0 +1,2 @@
+# The app window's private Chrome profile: machine-local state, not source.
+.profile/

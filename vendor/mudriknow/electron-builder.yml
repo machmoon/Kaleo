@@ -1,0 +1,40 @@
+appId: com.mudriknow.app
+productName: MudrikNow
+copyright: Copyright © 2026 MudrikNow contributors
+directories:
+  output: release
+  buildResources: assets
+asarUnpack:
+  # robotjs ships a native .node that must be loaded from a real path on disk,
+  # not from inside the asar archive.
+  - "**/node_modules/robotjs/**"
+files:
+  - dist/**/*
+  - package.json
+  - .opencode/agent/**
+  - assets/**
+extraResources:
+  # Ship the sandboxed agent definition alongside the app so the OpenCode CLI
+  # picks it up from the installed resources dir.
+  - from: .opencode
+    to: .opencode
+    filter:
+      - "agent/**"
+win:
+  target: nsis
+  icon: assets/icon.ico
+  artifactName: MudrikNow-Setup-${version}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  deleteAppDataOnUninstall: false
+  uninstallDisplayName: MudrikNow
+  shortcutName: MudrikNow
+publish:
+  provider: github
+  owner: abdallahmagdy15
+  repo: mudriknow
+  releaseType: release

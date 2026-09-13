@@ -1,0 +1,674 @@
+const { spawn } = require("child_process");
+const fs = require("fs");
+const path = require("path");
+const http = require("http");
+const debugLogger = require("./debugLogger");
+const { killProcess } = require("../utils/process");
+const { isPortAvailable } = require("../utils/serverUtils");
+const { getSafeTempDir } = require("./safeTempDir");
+const { app } = require("electron");
+const sidecarPidFile = require("./sidecarPidFile");
+const { BIN_SUBDIR: LLAMA_VULKAN_BIN_SUBDIR } = require("./llamaVulkanManager");
+
+// Range kept clear of cliBridge (8200-8219) to avoid port-bind collisions.
+const PORT_RANGE_START = 8221;
+const PORT_RANGE_END = 8240;
+const STARTUP_TIMEOUT_MS = 120000;
+const VULKAN_STARTUP_TIMEOUT_MS = 120000;
+const HEALTH_CHECK_INTERVAL_MS = 5000;
+const HEALTH_CHECK_TIMEOUT_MS = 2000;
+const STARTUP_POLL_INTERVAL_MS = 500;
+const HEALTH_CHECK_FAILURE_THRESHOLD = 3;
+const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+const DEFAULT_CONTEXT_SIZE = 4096;
+
+class LlamaServerManager {
+  constructor() {
+    this.process = null;
+    this.port = null;
+    this.ready = false;
+    this.modelPath = null;
+    // draftModelPath is the REQUESTED drafter (stable across identical requests, drives
+    // the start() restart check); activeDraftModelPath is the one that actually loaded.
+    this.draftModelPath = null;
+    this.activeDraftModelPath = null;
+    this.startupPromise = null;
+    this.healthCheckInterval = null;
+    this.healthCheckFailures = 0;
+    this.cachedServerBinaryPaths = null;
+    this.activeBackend = null;
+    this.idleTimer = null;
+  }
+
+  getServerBinaryPaths() {
+    if (this.cachedServerBinaryPaths) return this.cachedServerBinaryPaths;
+
+    const platform = process.platform;
+    const arch = process.arch;
+    const platformArch = `${platform}-${arch}`;
+    const ext = platform === "win32" ? ".exe" : "";
+
+    const resolveBinary = (name) => {
+      const candidates = [];
+      if (process.resourcesPath) {
+        candidates.push(path.join(process.resourcesPath, "bin", name));
+      }
+      candidates.push(path.join(__dirname, "..", "..", "resources", "bin", name));
+
+      for (const candidate of candidates) {
+        try {
+          if (fs.existsSync(candidate)) {
+            fs.statSync(candidate);
+            return candidate;
+          }
+        } catch {
+          // Can't access binary
+        }
+      }
+      return null;
+    };
+
+    let paths;
+
+    if (platform === "darwin") {
+      const defaultBin =
+        resolveBinary(`llama-server-${platformArch}`) || resolveBinary(`llama-server${ext}`);
+      paths = defaultBin ? { default: defaultBin } : {};
+    } else {
+      const vulkanName = `llama-server-vulkan${ext}`;
+      let vulkanBin = null;
+      try {
+        // Installed by LlamaVulkanManager into its own pack directory
+        const vulkanPath = path.join(
+          app.getPath("userData"),
+          "bin",
+          LLAMA_VULKAN_BIN_SUBDIR,
+          vulkanName
+        );
+        if (fs.existsSync(vulkanPath)) vulkanBin = vulkanPath;
+      } catch {}
+
+      const cpuBin =
+        resolveBinary(`llama-server-${platformArch}-cpu${ext}`) ||
+        resolveBinary(`llama-server-${platformArch}${ext}`) ||
+        resolveBinary(`llama-server${ext}`);
+
+      paths = {};
+      if (vulkanBin) paths.vulkan = vulkanBin;
+      if (cpuBin) paths.cpu = cpuBin;
+    }
+
+    // Only cache hits: a miss may be transient (binary downloaded after
+    // startup), and caching it would require an app restart to recover.
+    if (Object.keys(paths).length > 0) {
+      this.cachedServerBinaryPaths = paths;
+    }
+    return paths;
+  }
+
+  isAvailable() {
+    const paths = this.getServerBinaryPaths();
+    return Object.keys(paths).length > 0;
+  }
+
+  async findAvailablePort() {
+    for (let port = PORT_RANGE_START; port <= PORT_RANGE_END; port++) {
+      if (await isPortAvailable(port)) return port;
+    }
+    throw new Error(`No available ports in range ${PORT_RANGE_START}-${PORT_RANGE_END}`);
+  }
+
+  async start(modelPath, options = {}) {
+    if (this.startupPromise) return this.startupPromise;
+
+    // A change in drafter presence for the same model must still restart the
+    // server so the new speculative-decoding flags take effect.
+    const requestedDraftPath = options.draftModelPath || null;
+    if (this.ready && this.modelPath === modelPath && this.draftModelPath === requestedDraftPath)
+      return;
+
+    if (this.process) {
+      await this.stop();
+    }
+
+    this.startupPromise = this._doStart(modelPath, options);
+    try {
+      await this.startupPromise;
+    } finally {
+      this.startupPromise = null;
+    }
+  }
+
+  async _doStart(modelPath, options = {}) {
+    const binaryPaths = this.getServerBinaryPaths();
+    if (Object.keys(binaryPaths).length === 0) throw new Error("llama-server binary not found");
+    if (!fs.existsSync(modelPath)) throw new Error(`Model file not found: ${modelPath}`);
+
+    this.port = await this.findAvailablePort();
+    this.modelPath = modelPath;
+    // Store the REQUESTED drafter so start() compares against a stable value across
+    // identical requests; activeDraftModelPath tracks what actually loaded (see ctor).
+    this.draftModelPath = options.draftModelPath || null;
+    this.activeDraftModelPath = null;
+
+    const baseArgs = [
+      "--model",
+      modelPath,
+      "--host",
+      "127.0.0.1",
+      "--port",
+      String(this.port),
+      "--threads",
+      String(options.threads || 4),
+      // Unset, this defaults to the model's full trained context (128K+),
+      // whose KV cache can exceed total RAM with --fit disabled. See #1203.
+      "--ctx-size",
+      String(options.contextSize || DEFAULT_CONTEXT_SIZE),
+      "--jinja",
+    ];
+
+    // Draft flags stay separate from baseArgs so the fallback ladder can retry without
+    // them when a stale (pre-b9763) binary rejects the MTP args at parse time.
+    const draftArgs = options.draftModelPath
+      ? [
+          "--model-draft",
+          options.draftModelPath,
+          "--spec-type",
+          "draft-mtp",
+          "--spec-draft-n-max",
+          "3",
+        ]
+      : [];
+
+    if (process.platform === "darwin") {
+      // The metal binary is always the bundled pin, so it never rejects the draft flags.
+      const args = [...baseArgs, "--n-gpu-layers", String(options.gpuLayers ?? 99), ...draftArgs];
+      await this._startWithBinary(
+        binaryPaths.default,
+        args,
+        this._buildEnv(binaryPaths.default),
+        STARTUP_TIMEOUT_MS
+      );
+      this.activeBackend = "metal";
+      this.activeDraftModelPath = this.draftModelPath;
+    } else {
+      await this._startWithGpuFallback(binaryPaths, baseArgs, options, draftArgs);
+    }
+
+    this.startHealthCheck();
+    this.resetIdleTimer();
+    debugLogger.info("llama-server started successfully", {
+      port: this.port,
+      model: path.basename(modelPath),
+      backend: this.activeBackend,
+      mtp: this.activeDraftModelPath !== null,
+    });
+  }
+
+  async _startWithGpuFallback(binaryPaths, baseArgs, options, draftArgs = []) {
+    const gpuArgs = [...baseArgs, "--n-gpu-layers", String(options.gpuLayers ?? 99)];
+    const cpuArgs = baseArgs;
+    const hasDraft = draftArgs.length > 0;
+
+    // Degrade ladder: GPU+MTP, then GPU alone (a live GPU beats speculation), then
+    // CPU+MTP (the bundled pin normally accepts the flags), then plain CPU. The
+    // no-draft rungs collapse into their twins when no drafter is declared, so a
+    // drafterless start keeps today's exact single vulkan->cpu fallback.
+    const rungs = [
+      {
+        backend: "vulkan",
+        name: "Vulkan",
+        binary: binaryPaths.vulkan,
+        args: [...gpuArgs, ...draftArgs],
+        mtp: hasDraft,
+        timeout: VULKAN_STARTUP_TIMEOUT_MS,
+        attemptMsg: "Attempting Vulkan backend startup",
+      },
+      {
+        backend: "vulkan",
+        name: "Vulkan",
+        binary: binaryPaths.vulkan,
+        args: gpuArgs,
+        mtp: false,
+        noDraft: true,
+        timeout: VULKAN_STARTUP_TIMEOUT_MS,
+        attemptMsg: "Attempting Vulkan backend startup",
+      },
+      {
+        backend: "cpu",
+        name: "CPU",
+        binary: binaryPaths.cpu,
+        args: [...cpuArgs, ...draftArgs],
+        mtp: hasDraft,
+        timeout: STARTUP_TIMEOUT_MS,
+        attemptMsg: "Starting with CPU backend",
+      },
+      {
+        backend: "cpu",
+        name: "CPU",
+        binary: binaryPaths.cpu,
+        args: cpuArgs,
+        mtp: false,
+        noDraft: true,
+        timeout: STARTUP_TIMEOUT_MS,
+        attemptMsg: "Starting with CPU backend",
+      },
+    ];
+
+    const ladder = rungs.filter((rung) => rung.binary && !(rung.noDraft && !hasDraft));
+    if (ladder.length === 0) throw new Error("No CPU llama-server binary available");
+
+    let lastError = null;
+    for (let i = 0; i < ladder.length; i++) {
+      const rung = ladder[i];
+      const next = ladder[i + 1];
+      try {
+        debugLogger.debug(rung.attemptMsg);
+        await this._startWithBinary(
+          rung.binary,
+          rung.args,
+          this._buildEnv(rung.binary),
+          rung.timeout
+        );
+        this.activeBackend = rung.backend;
+        this.activeDraftModelPath = rung.mtp ? this.draftModelPath : null;
+        return;
+      } catch (err) {
+        lastError = err;
+        if (next) {
+          debugLogger.warn(`${rung.name} backend failed, falling back to ${next.name}`, {
+            error: err.message,
+          });
+          await this._killCurrentProcess();
+          this.port = await this.findAvailablePort();
+        }
+      }
+    }
+
+    throw lastError || new Error("No CPU llama-server binary available");
+  }
+
+  _buildEnv(binaryPath) {
+    const binDir = path.dirname(binaryPath);
+    const env = { ...process.env };
+
+    if (process.platform === "darwin") {
+      env.DYLD_LIBRARY_PATH = binDir + (env.DYLD_LIBRARY_PATH ? `:${env.DYLD_LIBRARY_PATH}` : "");
+    } else if (process.platform === "linux") {
+      env.LD_LIBRARY_PATH = binDir + (env.LD_LIBRARY_PATH ? `:${env.LD_LIBRARY_PATH}` : "");
+    } else if (process.platform === "win32") {
+      env.PATH = binDir + (env.PATH ? `;${env.PATH}` : "");
+    }
+
+    // Select GPU by UUID + PCI_BUS_ID order so the device is unambiguous. See #531.
+    env.CUDA_DEVICE_ORDER = "PCI_BUS_ID";
+    if (process.env.INTELLIGENCE_GPU_UUID) {
+      env.CUDA_VISIBLE_DEVICES = process.env.INTELLIGENCE_GPU_UUID;
+    }
+
+    // Disable llama.cpp auto-fit memory probing (adds ~70s to startup). Set via env
+    // so builds without --fit ignore it instead of erroring. See LLAMA_ARG_FIT.
+    env.LLAMA_ARG_FIT = process.env.LLAMA_ARG_FIT || "off";
+
+    return env;
+  }
+
+  _startWithBinary(binaryPath, args, env, timeoutMs) {
+    return new Promise((resolve, reject) => {
+      debugLogger.debug("Spawning llama-server", { binary: binaryPath, port: this.port, args });
+
+      this.process = spawn(binaryPath, args, {
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+        cwd: getSafeTempDir(),
+        env,
+        detached: process.platform !== "win32",
+      });
+      sidecarPidFile.write("llama", this.process.pid);
+
+      let stderrBuffer = "";
+      let exitCode = null;
+      let exitSignal = null;
+      let settled = false;
+
+      const settle = (fn) => {
+        if (settled) return;
+        settled = true;
+        fn();
+      };
+
+      this.process.stdout.on("data", (data) => {
+        debugLogger.debug("llama-server stdout", { data: data.toString().trim() });
+      });
+
+      this.process.stderr.on("data", (data) => {
+        stderrBuffer += data.toString();
+        debugLogger.debug("llama-server stderr", { data: data.toString().trim() });
+      });
+
+      this.process.on("error", (error) => {
+        debugLogger.error("llama-server process error", { error: error.message });
+        this.ready = false;
+        settle(() => reject(new Error(`Failed to spawn llama-server: ${error.message}`)));
+      });
+
+      this.process.on("close", (code, signal) => {
+        exitCode = code;
+        exitSignal = signal;
+        debugLogger.debug("llama-server process exited", { code, signal });
+        this.ready = false;
+        this.process = null;
+        this.stopHealthCheck();
+        sidecarPidFile.clear("llama");
+      });
+
+      const getProcessInfo = () => ({ stderr: stderrBuffer, exitCode, exitSignal });
+
+      const startTime = Date.now();
+      let pollCount = 0;
+
+      const poll = async () => {
+        if (settled) return;
+
+        if (!this.process || this.process.killed) {
+          const info = getProcessInfo();
+          const signal = info.exitSignal;
+          const diagParts = [];
+          if (signal) diagParts.push(`signal: ${signal}`);
+          else if (info.exitCode !== null && info.exitCode !== undefined)
+            diagParts.push(`exit code: ${info.exitCode}`);
+          const oomHint =
+            signal === "SIGKILL"
+              ? " — the process was killed by the OS, likely due to insufficient memory. Try a smaller/more quantized model, or reduce the context size."
+              : "";
+          const stderr = info.stderr ? info.stderr.trim().slice(-800) : "";
+          const diagStr = diagParts.length ? ` (${diagParts.join(", ")})` : "";
+          settle(() =>
+            reject(
+              new Error(
+                `llama-server process died during startup${diagStr}${oomHint}${stderr ? `\nProcess output: ${stderr}` : ""}`
+              )
+            )
+          );
+          return;
+        }
+
+        pollCount++;
+        if (await this.checkHealth()) {
+          this.ready = true;
+          debugLogger.debug("llama-server ready", {
+            startupTimeMs: Date.now() - startTime,
+            pollCount,
+          });
+          settle(() => resolve());
+          return;
+        }
+
+        if (Date.now() - startTime >= timeoutMs) {
+          settle(() => reject(new Error(`llama-server failed to start within ${timeoutMs}ms`)));
+          return;
+        }
+
+        setTimeout(poll, STARTUP_POLL_INTERVAL_MS);
+      };
+
+      poll();
+    });
+  }
+
+  async _killCurrentProcess() {
+    if (!this.process) return;
+
+    this.stopHealthCheck();
+
+    try {
+      killProcess(this.process, "SIGTERM");
+      await new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+          if (this.process) killProcess(this.process, "SIGKILL");
+          resolve();
+        }, 5000);
+
+        if (this.process) {
+          this.process.once("close", () => {
+            clearTimeout(timeout);
+            resolve();
+          });
+        } else {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+    } catch (error) {
+      debugLogger.error("Error killing llama-server process", { error: error.message });
+    }
+
+    this.process = null;
+    this.ready = false;
+  }
+
+  checkHealth() {
+    return new Promise((resolve) => {
+      const req = http.request(
+        {
+          hostname: "127.0.0.1",
+          port: this.port,
+          path: "/health",
+          method: "GET",
+          timeout: HEALTH_CHECK_TIMEOUT_MS,
+        },
+        (res) => {
+          resolve(res.statusCode === 200);
+          res.resume();
+        }
+      );
+
+      req.on("error", () => resolve(false));
+      req.on("timeout", () => {
+        req.destroy();
+        resolve(false);
+      });
+      req.end();
+    });
+  }
+
+  startHealthCheck() {
+    this.stopHealthCheck();
+    this.healthCheckFailures = 0;
+    this.healthCheckInterval = setInterval(async () => {
+      try {
+        if (!this.process) {
+          this.stopHealthCheck();
+          return;
+        }
+        if (await this.checkHealth()) {
+          this.healthCheckFailures = 0;
+        } else {
+          this.healthCheckFailures++;
+          if (this.healthCheckFailures >= HEALTH_CHECK_FAILURE_THRESHOLD) {
+            debugLogger.warn("llama-server health check failed", {
+              consecutiveFailures: this.healthCheckFailures,
+            });
+            this.ready = false;
+          }
+        }
+      } catch (err) {
+        debugLogger.error("Health check error", { error: err.message });
+      }
+    }, HEALTH_CHECK_INTERVAL_MS);
+  }
+
+  stopHealthCheck() {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+      this.healthCheckInterval = null;
+    }
+  }
+
+  resetIdleTimer() {
+    this.clearIdleTimer();
+    this.idleTimer = setTimeout(() => {
+      debugLogger.info("llama-server idle timeout reached, stopping to free VRAM", {
+        timeoutMs: IDLE_TIMEOUT_MS,
+        model: this.modelPath ? path.basename(this.modelPath) : null,
+      });
+      this.stop();
+    }, IDLE_TIMEOUT_MS);
+  }
+
+  clearIdleTimer() {
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
+  }
+
+  async inference(messages, options = {}) {
+    if (!this.ready || !this.process) {
+      throw new Error("llama-server is not running");
+    }
+
+    this.clearIdleTimer();
+
+    const requestBody = {
+      messages,
+      temperature: options.temperature ?? 0.7,
+      max_tokens: options.max_tokens ?? 512,
+      stream: false,
+    };
+
+    // Without this, Qwen chat templates leave `message.content` empty and
+    // route output into `reasoning_content`. Non-Qwen templates ignore it.
+    if (options.disableThinking !== false) {
+      requestBody.chat_template_kwargs = { enable_thinking: false };
+    }
+
+    const body = JSON.stringify(requestBody);
+
+    return new Promise((resolve, reject) => {
+      const startTime = Date.now();
+
+      const req = http.request(
+        {
+          hostname: "127.0.0.1",
+          port: this.port,
+          path: "/v1/chat/completions",
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Content-Length": Buffer.byteLength(body),
+          },
+          timeout: 300000,
+        },
+        (res) => {
+          let data = "";
+          res.on("data", (chunk) => {
+            data += chunk;
+          });
+          res.on("end", () => {
+            debugLogger.debug("llama-server inference completed", {
+              statusCode: res.statusCode,
+              elapsed: Date.now() - startTime,
+            });
+
+            if (res.statusCode !== 200) {
+              reject(new Error(`llama-server returned status ${res.statusCode}: ${data}`));
+              return;
+            }
+
+            try {
+              const response = JSON.parse(data);
+              if (
+                options.requireCompleteOutput &&
+                ["length", "max_tokens"].includes(response.choices?.[0]?.finish_reason)
+              ) {
+                reject(new Error("Model output was truncated before the selection edit completed"));
+                return;
+              }
+              const message = response.choices?.[0]?.message;
+              const text = message?.content || message?.reasoning_content || "";
+              resolve(text.trim());
+            } catch (e) {
+              reject(new Error(`Failed to parse llama-server response: ${e.message}`));
+            }
+          });
+        }
+      );
+
+      req.on("error", (error) => {
+        reject(new Error(`llama-server request failed: ${error.message}`));
+      });
+      req.on("timeout", () => {
+        req.destroy();
+        reject(new Error("llama-server request timed out"));
+      });
+
+      req.write(body);
+      req.end();
+    }).finally(() => this.resetIdleTimer());
+  }
+
+  async stop() {
+    this.clearIdleTimer();
+    this.stopHealthCheck();
+
+    if (!this.process) {
+      this.ready = false;
+      return;
+    }
+
+    debugLogger.debug("Stopping llama-server");
+
+    try {
+      killProcess(this.process, "SIGTERM");
+
+      await new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+          if (this.process) {
+            killProcess(this.process, "SIGKILL");
+          }
+          resolve();
+        }, 5000);
+
+        if (this.process) {
+          this.process.once("close", () => {
+            clearTimeout(timeout);
+            resolve();
+          });
+        } else {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+    } catch (error) {
+      debugLogger.error("Error stopping llama-server", { error: error.message });
+    }
+
+    this.process = null;
+    this.ready = false;
+    this.port = null;
+    this.modelPath = null;
+    this.draftModelPath = null;
+    this.activeDraftModelPath = null;
+    this.activeBackend = null;
+  }
+
+  getStatus() {
+    return {
+      available: this.isAvailable(),
+      running: this.ready && this.process !== null,
+      port: this.port,
+      modelPath: this.modelPath,
+      modelName: this.modelPath ? path.basename(this.modelPath, ".gguf") : null,
+      backend: this.activeBackend,
+      gpuAccelerated: this.activeBackend === "vulkan" || this.activeBackend === "metal",
+    };
+  }
+
+  resetGpuDetection() {
+    this.activeBackend = null;
+    this.cachedServerBinaryPaths = null;
+  }
+}
+
+module.exports = LlamaServerManager;

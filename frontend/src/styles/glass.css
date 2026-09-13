@@ -1,0 +1,114 @@
+/* Glass — the overlay skin, a second reading of the same instrument.
+
+   Drafting Table (tokens.css) is the workstation: opaque paper, square
+   corners, hairlines you could draw with a pen. Glass is the always-on
+   surface the overlay wants — translucent panels blurred over a lit ground,
+   the look an ambient copilot has to have to sit on top of somebody's screen
+   without owning it.
+
+   The palette is a token override. Every panel paints from --surface /
+   --rail / --well / --paper, so no component branches on which skin is
+   active. Components only classify their material behavior because blur
+   cannot be a colour: `backdrop-filter` has to sit on the element doing the
+   blurring. Rendered surfaces therefore declare one auditable
+   `data-material` role, and base.css applies
+
+       backdrop-filter: var(--material-filter);
+       border-radius: var(--panel-radius);
+
+   Paper defines both tokens explicitly as inert; glass overrides them here.
+   Tint and canvas roles deliberately receive no filter, avoiding nested blur
+   stacks and preserving the board and schematic drawing surfaces.
+
+   Like tokens.css, every themed value is a light-dark() pair. Glass is NOT
+   dark-only: the night reading is smoked graphite, the day reading is the
+   frosted white the same material has in daylight. Defining one and
+   forgetting the other is the bug this whole convention exists to prevent.
+   The board well is the deliberate exception it already was -- the board is
+   the board -- so none of the --board-*, --well-bg, or --well-text values are
+   touched. */
+
+:root[data-skin='glass'] {
+  /* the lit ground the panels float over; the gradient itself is on body */
+  --paper: light-dark(#E4E7EF, #0B0D11);
+
+  /* Translucent, so the ground reads through every panel. The elevation
+     order survives the change of material: surface sits above rail, rail
+     above the recessed well. */
+  --surface: light-dark(rgba(255, 255, 255, .58), rgba(255, 255, 255, .055));
+  --rail: light-dark(rgba(255, 255, 255, .40), rgba(255, 255, 255, .032));
+  --well: light-dark(rgba(255, 255, 255, .70), rgba(0, 0, 0, .30));
+  --sticky-surface: light-dark(rgba(228, 231, 239, .82), rgba(11, 13, 17, .78));
+
+  /* ink tiers, read against glass rather than paper */
+  --ink: light-dark(#11141B, #ECEFF4);
+  --ink-mid: light-dark(#3B4250, #B3BBC7);
+  --ink-soft: light-dark(#69707F, #888F9C);
+  --ink-faint: light-dark(#98A0AE, #5F6773);
+
+  /* hairlines become edges of the material, not drawn lines */
+  --rule: light-dark(rgba(17, 20, 27, .17), rgba(255, 255, 255, .15));
+  --rule-soft: light-dark(rgba(17, 20, 27, .09), rgba(255, 255, 255, .075));
+
+  /* The wordmark's oxblood survives the skin -- it is the product's colour,
+     not the palette's -- lifted just enough to hold against smoked glass. */
+  --accent: light-dark(#8E1A14, #C2453A);
+  --accent-ink: light-dark(#FFFFFF, #FBEEEC);
+  --accent-off: light-dark(rgba(17, 20, 27, .22), rgba(255, 255, 255, .13));
+  --accent-off-ink: light-dark(rgba(255, 255, 255, .85), rgba(255, 255, 255, .38));
+
+  /* Severity backgrounds go translucent for the same reason the panels did:
+     an opaque chip on a glass card is a hole in the material. The foregrounds
+     stay saturated, because severity has to survive the blur behind it. */
+  --sev-blocker-fg: light-dark(#C7130F, #FF7B72);
+  --sev-blocker-bg: light-dark(rgba(230, 9, 13, .10), rgba(255, 107, 99, .13));
+  --sev-blocker-rule: light-dark(#C7130F, #FF7B72);
+  --sev-marginal-fg: light-dark(#8A6300, #EFC05C);
+  --sev-marginal-bg: light-dark(rgba(209, 146, 0, .13), rgba(231, 181, 74, .12));
+  --sev-marginal-rule: light-dark(#C08600, #D6A03A);
+  --sev-note-fg: light-dark(#3B4250, #B3BBC7);
+  --sev-note-bg: light-dark(rgba(17, 20, 27, .05), rgba(255, 255, 255, .05));
+  --sev-note-rule: light-dark(#69707F, #9AA1AD);
+
+  /* KiCad's symbol inks, pulled toward the cooler ground */
+  --oxblood: light-dark(#8E1A14, #E08A80);
+  --teal: light-dark(#00595C, #6FC8BF);
+  --green: light-dark(#0A7A34, #5FC983);
+  --navy: light-dark(#1B3A8F, #92B4EC);
+
+  --schematic-symbol-fill: light-dark(rgba(255, 250, 205, .70), rgba(255, 236, 150, .07));
+  --schematic-net-label: light-dark(#7A5C00, #DFC468);
+  --schematic-grid-dot: light-dark(rgba(27, 58, 143, .13), rgba(146, 180, 236, .13));
+
+  --shadow-pop: light-dark(rgba(17, 20, 27, .18), rgba(0, 0, 0, .55));
+
+  /* What chrome, panels, popovers, and sticky surfaces switch on. */
+  --material-filter: saturate(150%) blur(22px);
+  --panel-radius: 10px;
+
+  /* Buttons round with the material rather than staying at the pen-drawn 2px. */
+  --radius: 7px;
+}
+
+/* The lit ground. Two soft pools rather than a flat fill: glass with nothing
+   behind it is just a grey panel, and the blur has to have something to do.
+   Fixed attachment so the light stays put while the centre column scrolls. */
+:root[data-skin='glass'] body {
+  background-color: var(--paper);
+  background-image:
+    radial-gradient(58vw 48vh at 12% -6%, light-dark(rgba(255, 255, 255, .95), rgba(86, 104, 148, .30)), transparent 68%),
+    radial-gradient(48vw 44vh at 96% 8%, light-dark(rgba(196, 214, 255, .60), rgba(142, 62, 58, .22)), transparent 66%),
+    radial-gradient(70vw 60vh at 50% 112%, light-dark(rgba(214, 222, 240, .70), rgba(38, 52, 80, .38)), transparent 70%);
+  background-attachment: fixed;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-skin='glass'] {
+    --material-filter: none;
+    --surface: light-dark(#F2F4F8, #1C1F26);
+    --rail: light-dark(#EDEFF4, #171A20);
+    --well: light-dark(#F8F9FB, #101317);
+    --sticky-surface: var(--paper);
+  }
+  :root[data-skin='glass'] body { background-image: none; }
+}

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Kaleo mark: differential pair — two parallel stepped traces (charcoal + copper). -->
+  <rect width="512" height="512" rx="110" fill="#0A0A0A"/>
+  <g fill="none" stroke-width="36" stroke-linecap="round" stroke-linejoin="round">
+    <path stroke="#2A2A2A" d="M72 292 H168 L296 164 H440"/>
+    <path stroke="#B86D38" d="M72 348 H168 L296 220 H440"/>
+  </g>
+</svg>

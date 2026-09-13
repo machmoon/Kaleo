@@ -1,0 +1,2484 @@
+import { ipcMain, BrowserWindow, app } from "electron";
+import { Config, ContextPayload, IPC, Action, VisibleWindow, ModelDisplay, ProviderStatus } from "../shared/types";
+import { OpenCodeClient, OpenCodeEvent, findOpenCodeBin, isNativeOpenCodeBin } from "./opencode-client";
+import { buildSystemPrompt } from "../shared/prompts";
+import { buildCleanOpenCodeEnv, providerFromModelId, OpenCodeAuthFile, knownProviderNames, envVarForProvider } from "../shared/providers";
+import { classifyError, extractErrorMessage } from "../shared/error-classifier";
+import {
+  getKeyUrl, getLogoUrl, isFreeProvider, providerDisplayName, envVarFromCatalog, getEffortOptions,
+} from "../shared/provider-catalog";
+import { getCatalog } from "./catalog-store";
+import { verifyProviderKey } from "./key-verifier";
+import { parseVerboseModels } from "./models-parser";
+
+/**
+ * OpenCode reads provider credentials from `<XDG_DATA_HOME>/opencode/auth.json`,
+ * defaulting to `~/.local/share/opencode/auth.json` on Windows when no
+ * `XDG_DATA_HOME` is set. MudrikNow writes to that same default path so a
+ * user's standalone `opencode auth login` / `opencode auth list` from a
+ * terminal sees the same credentials MudrikNow's subprocesses use.
+ */
+function findOpenCodeAuthPath(): string {
+  const xdgData = process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share");
+  return path.join(xdgData, "opencode", "auth.json");
+}
+
+function readOpenCodeAuthKeys(): Record<string, string> {
+  const authPath = findOpenCodeAuthPath();
+  const keys: Record<string, string> = {};
+  try {
+    if (fs.existsSync(authPath)) {
+      const raw = fs.readFileSync(authPath, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        for (const [provider, entry] of Object.entries(parsed as Record<string, any>)) {
+          if (entry && entry.type === "api" && typeof entry.key === "string" && entry.key) {
+            keys[provider] = entry.key;
+          }
+        }
+      }
+    }
+  } catch { /* best-effort */ }
+  return keys;
+}
+
+/** Merge auth.json keys into config.apiKeys (config wins over auth.json). */
+function mergedApiKeys(configApiKeys: Record<string, string>): Record<string, string> {
+  const authKeys = readOpenCodeAuthKeys();
+  return { ...authKeys, ...configApiKeys };
+}
+
+function updateAuthFile(authPath: string, provider: string, key: string | null): void {
+  let auth: OpenCodeAuthFile = {};
+  try {
+    if (fs.existsSync(authPath)) {
+      const raw = fs.readFileSync(authPath, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") auth = parsed as OpenCodeAuthFile;
+    }
+  } catch (err: any) {
+    log(`updateAuthFile: read failed (${err.message}) — starting fresh`);
+  }
+
+  const existing = auth[provider];
+  if (existing && existing.type !== "api") {
+    log(`updateAuthFile: skipping ${provider} — entry is type=${existing.type}, not API key`);
+    return;
+  }
+
+  if (key) {
+    auth[provider] = { type: "api", key };
+  } else {
+    delete auth[provider];
+  }
+
+  try {
+    fs.mkdirSync(path.dirname(authPath), { recursive: true });
+    fs.writeFileSync(authPath, JSON.stringify(auth, null, 2));
+    log(`updateAuthFile: ${key ? "set" : "cleared"} ${provider} in ${authPath}`);
+  } catch (err: any) {
+    log(`updateAuthFile: write failed (${err.message})`);
+  }
+}
+
+/**
+ * Persist MudrikNow's apiKey changes into OpenCode's on-disk auth.json at the
+ * default opencode data location. Writing to the same path a standalone
+ * `opencode` CLI uses means the credentials stay in sync between MudrikNow
+ * and any CLI invocation — no separate MudrikNow-only store to forget about.
+ *
+ * `key === null` clears the entry. Only touches `type: "api"` rows so any
+ * OAuth credentials written by `opencode auth login` survive untouched.
+ */
+function writeOpenCodeAuth(provider: string, key: string | null): void {
+  const authPath = findOpenCodeAuthPath();
+  updateAuthFile(authPath, provider, key);
+}
+
+/** True while a SEND_PROMPT cycle is in-flight. STOP_RESPONSE flips this so
+ *  the "no text received" branch can stay quiet (the user knows they stopped
+ *  it; surfacing a generic error would be misleading). */
+let userStoppedCurrentResponse = false;
+import { executeAction, parseActionsFromResponse, ActionResult, setLastContextElement, validateAction, isInteractiveAction } from "./action-executor";
+import { notifyResponseReady } from "./notifier";
+import { cleanupImage, captureAndOptimize } from "./vision";
+import { saveConfig, ensureIsolatedOpenCodeConfig, migrateIsolatedOpenCodeDataToDefault, ensureAgentInWorkingDir } from "./config-store";
+import { spawn } from "child_process";
+import * as os from "os";
+import * as path from "path";
+import * as fs from "fs";
+
+import { log } from "./logger";
+import { startTimer } from "./debug-timing";
+import { settingsDeltaParts, buildSettingsDeltaBlock, buildSettingsSnapshotBlock } from "./settings-delta";
+
+function computeContextHash(context: ContextPayload | null, isArea: boolean, areaEls: any[]): string {
+  if (!context) return "";
+  const el = context.element;
+  const imageLen = context.imagePath ? 1 : 0;
+  const areaCount = areaEls.length;
+  return `${isArea}:${el.type}:${el.name}:${el.value?.slice(0, 50)}:${imageLen}:${areaCount}`;
+}
+
+// Fixed-format local timestamp for settings snapshots/deltas. The AI resolves
+// conflicting settings instructions by "latest timestamp wins", so a stable,
+// readable format matters more than timezone precision.
+function settingsTimestamp(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+let client: OpenCodeClient;
+let appConfig: Config;
+let currentContext: ContextPayload | null = null;
+let hidePanelFn: (() => void) | null = null;
+let showPanelFn: ((context: ContextPayload) => void) | null = null;
+let lastContext: ContextPayload | null = null;
+let fullResponseText: string = "";
+let lastFailedAction: Action | null = null;
+let isAreaContext: boolean = false;
+let areaElements: any[] = [];
+let areaImagePath: string = "";
+let areaRect: { x1: number; y1: number; x2: number; y2: number } | null = null;
+let lastContextHash: string = "";
+let contextNeedsSending: boolean = false;
+let hasSentFirstMessage: boolean = false;
+// Settings-change tracking. When the user toggles actionsEnabled or
+// autoGuideEnabled mid-conversation, the next follow-up injects a small
+// "SETTINGS UPDATE" notice (with timestamp) so the AI overrides its earlier
+// instruction. A full rebuild (new context capture / new session) emits a
+// fresh snapshot line instead. The AI resolves conflicts by newest timestamp.
+let settingsSnapshot: { actionsEnabled: boolean; autoGuideEnabled: boolean; time: string } | null = null;
+let settingsDirty = false;
+// Cached recent chats list (cleared on startup and when a new chat starts)
+let recentChatsCache: { id: string; title: string; created: number }[] | null = null;
+// Mirror of the guide controller's phase, updated by onStateUpdate. Lets
+// callers (auto-show suppression, onContext message preservation) gate on
+// guide activity without forcing the lazy-loaded guide module to load.
+let guidePhase: string = "idle";
+function guideIsActive(): boolean {
+  return guidePhase !== "idle";
+}
+// Set by STOP_RESPONSE when a guide was interrupted. Two effects:
+// 1. Suppresses guide marker dispatch from any buffered text the killed
+//    AI subprocess emitted (otherwise the very next guide_step would
+//    re-trigger the overlay/hook).
+// 2. Prepends a note to the user's next non-followup SEND_PROMPT so the
+//    AI's conversation history reflects the cancellation and it doesn't
+//    silently resume the guide on the next message.
+// Cleared the moment SEND_PROMPT consumes it (one-shot).
+let guideStoppedFlag: boolean = false;
+
+// Resolve the panel BrowserWindow (the React-app window the user types into),
+// excluding the auto-guide overlay. Once the overlay is created on the first
+// trackable step, BrowserWindow.getAllWindows()[0] becomes ambiguous and can
+// return the overlay — sending IPC into the wrong window silently breaks
+// every state update that depends on it. Filter by the loaded URL: the panel
+// is index.html, the overlay is guide-overlay.html.
+export function getPanelWindow(): BrowserWindow | null {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (w.isDestroyed()) continue;
+    let url = "";
+    try { url = w.webContents.getURL(); } catch { continue; }
+    if (url.includes("guide-overlay.html")) continue;
+    return w;
+  }
+  return null;
+}
+let attachScreenshotNext: boolean = false;
+let restoreBounds: { x: number; y: number; width: number; height: number } | null = null;
+type ScreenshotMode = "none" | "chromium-auto" | "manual" | "area" | "area-chromium";
+let screenshotMode: ScreenshotMode = "none";
+let screenInfo: { physicalWidth: number; physicalHeight: number; scaleFactor: number } | null = null;
+
+export function setContext(context: ContextPayload): void {
+  const newHash = computeContextHash(context, false, []);
+  const isSameContext = newHash === lastContextHash && lastContextHash !== "";
+
+  if (!isSameContext && currentContext?.imagePath) {
+    cleanupImage(currentContext.imagePath);
+  }
+  if (areaImagePath) {
+    cleanupImage(areaImagePath);
+    areaImagePath = "";
+  }
+  currentContext = context;
+  lastContext = context;
+  isAreaContext = false;
+  areaElements = [];
+
+  if (isSameContext) {
+    log(`setContext: same context — not marking for re-send (hash=${newHash})`);
+    // If restoreSessionOnActivate is disabled, start a fresh session even
+    // on the same context. Otherwise a stale session ID from hours ago
+    // gets reused and the provider returns empty responses.
+    if (!appConfig?.restoreSessionOnActivate) {
+      hasSentFirstMessage = false;
+      client.resetSession();
+      log("setContext: restoreSessionOnActivate=false — resetting session");
+    }
+  } else {
+    contextNeedsSending = true;
+    lastContextHash = newHash;
+    log(`setContext: NEW context — marked for sending (hash=${newHash})`);
+  }
+
+  setLastContextElement({
+    automationId: context.element?.automationId,
+    bounds: context.element?.bounds,
+    name: context.element?.name,
+    type: context.element?.type,
+  });
+  // Cache the user's app HWND so action handlers can use the captured
+  // foreground (Excel/Chrome/etc.) instead of whatever's foreground at
+  // execution time (which is usually MudrikNow's panel, since the user
+  // just submitted a prompt). Lazy-loads active-window.ts the first
+  // time so we don't pull koffi into the cold-start path for users
+  // who never trigger an action.
+  if (context.windowInfo?.hwnd) {
+    void import("./guide/active-window")
+      .then((m) => m.setLastUserAppHwnd(context.windowInfo!.hwnd!))
+      .catch((e) => log(`setContext: setLastUserAppHwnd failed (${e?.message || e})`));
+  }
+  log(`setContext: element type="${context.element?.type}" name="${context.element?.name}" automationId="${context.element?.automationId || ""}" hwnd=${context.windowInfo?.hwnd || 0}`);
+}
+
+export function getLastContext(): ContextPayload | null {
+  return lastContext;
+}
+
+/**
+ * Attach a screenshot to the current pointer context.
+ * Sets the imagePath on currentContext + arms the `attachScreenshotNext`
+ * flag so the next SEND_PROMPT includes the image.
+ */
+export function attachAutoScreenshot(imagePath: string): void {
+  if (currentContext) {
+    if (currentContext.imagePath && currentContext.imagePath !== imagePath) {
+      cleanupImage(currentContext.imagePath);
+    }
+    currentContext.imagePath = imagePath;
+    currentContext.hasScreenshot = true;
+  } else {
+    currentContext = {
+      element: { name: "Auto-attached screenshot", type: "screenshot", value: "", bounds: { x: 0, y: 0, width: 0, height: 0 }, children: [] },
+      surrounding: [],
+      cursorPos: { x: 0, y: 0 },
+      imagePath,
+      hasScreenshot: true,
+    };
+    lastContext = currentContext;
+  }
+  attachScreenshotNext = true;
+  log(`attachAutoScreenshot: image=${imagePath.slice(-40)}`);
+}
+
+export function setScreenshotMode(mode: ScreenshotMode, info: { physicalWidth: number; physicalHeight: number; scaleFactor: number }): void {
+  screenshotMode = mode;
+  screenInfo = info;
+  log(`Screenshot mode: ${mode}, screen=${info.physicalWidth}x${info.physicalHeight} @${info.scaleFactor}x`);
+}
+
+export function resetScreenshotMode(): void {
+  screenshotMode = "none";
+  screenInfo = null;
+}
+
+/**
+ * Returns the context that is *currently* active (i.e. the one most recently
+ * set via setContext or setAreaContext). Used by deferred async work (like
+ * pointer-flow image capture) to detect that the user has moved on to a
+ * different element before pushing a stale update to the renderer.
+ */
+export function getCurrentContext(): ContextPayload | null {
+  return currentContext;
+}
+
+export function setAreaContext(elements: any[], rect: { x1: number; y1: number; x2: number; y2: number }, cursorPos: { x: number; y: number }, imagePath?: string): ContextPayload {
+  if (currentContext?.imagePath) {
+    cleanupImage(currentContext.imagePath);
+  }
+  if (areaImagePath) {
+    cleanupImage(areaImagePath);
+  }
+  isAreaContext = true;
+  areaElements = elements;
+  areaImagePath = imagePath || "";
+  areaRect = rect;
+  attachScreenshotNext = false;
+  screenshotMode = "none";
+  screenInfo = null;
+
+  const primaryElement = elements.length > 0 ? elements[0] : {
+    name: "Area Selection",
+    type: "area",
+    value: `Selected area (${rect.x1},${rect.y1}) to (${rect.x2},${rect.y2}) containing ${elements.length} elements`,
+    bounds: { x: rect.x1, y: rect.y1, width: rect.x2 - rect.x1, height: rect.y2 - rect.y1 },
+    children: [],
+  };
+
+  const context: ContextPayload = {
+    element: primaryElement,
+    surrounding: elements.slice(1, 30),
+    cursorPos,
+    imagePath,
+    hasScreenshot: !!imagePath,
+  };
+
+  currentContext = context;
+  lastContext = context;
+  contextNeedsSending = true;
+  hasSentFirstMessage = false;
+  lastContextHash = computeContextHash(context, true, elements);
+  client.resetSession();
+
+  if (elements.length > 0) {
+    setLastContextElement({
+      automationId: elements[0].automationId,
+      bounds: elements[0].bounds,
+      name: elements[0].name,
+      type: elements[0].type,
+    });
+  }
+
+  log(`setAreaContext: ${elements.length} elements in rect (${rect.x1},${rect.y1})-(${rect.x2},${rect.y2}), image=${imagePath ? "yes" : "no"}`);
+  return context;
+}
+
+export type ConfigChangeListener = (next: Config, prev: Config) => void;
+
+let configChangeListener: ConfigChangeListener | null = null;
+
+/**
+ * Mutate the in-memory config and persist without firing the change listener.
+ * Used for high-frequency updates (panel resize/move) that don't require
+ * re-registering hotkeys or other side effects.
+ */
+export function patchConfigPersistOnly(patch: Partial<Config>): void {
+  if (!appConfig) return;
+  Object.assign(appConfig, patch);
+  saveConfig(appConfig);
+}
+
+function formatElementType(type: string): string {
+  return type.replace("ControlType.", "");
+}
+
+// Element types that legitimately carry rich text content (document body,
+// editor contents, long form values). The PS script now returns up to
+// 15000 chars in their `value` field; formatWindowTree must NOT clamp
+// them at 60 chars or the user's "what does this doc say" question
+// loses all signal. Plain UI elements (buttons, panes, labels) stay
+// clamped to keep the tree readable.
+const RICH_TEXT_TREE_TYPES = new Set([
+  "ControlType.Document",
+  "ControlType.Edit",
+  "ControlType.Text",
+  "ControlType.Custom",
+]);
+const RICH_TEXT_TREE_CAP = 8000;
+const PLAIN_TREE_VALUE_CAP = 200;
+
+function formatWindowTree(elements: { type: string; name: string; value: string; automationId?: string; bounds: { x: number; y: number; width: number; height: number }; depth?: number; isTarget?: boolean; isOffscreen?: boolean }[]): string {
+  if (!elements || elements.length === 0) return "";
+  const lines: string[] = [];
+  for (const el of elements) {
+    if (el.isOffscreen) continue;
+    const indent = "  ".repeat(Math.max(0, el.depth || 0));
+    const t = formatElementType(el.type);
+    let line = `${indent}${t}`;
+    if (el.name) line += ` "${el.name}"`;
+    if (el.automationId) line += ` [${el.automationId}]`;
+    if (el.value) {
+      const cap = RICH_TEXT_TREE_TYPES.has(el.type) ? RICH_TEXT_TREE_CAP : PLAIN_TREE_VALUE_CAP;
+      const v = el.value.length > cap
+        ? el.value.slice(0, cap) + `... (${el.value.length} chars, showing first ${cap})`
+        : el.value;
+      // Multi-line values (document bodies, code editor contents) read
+      // far better when broken onto their own indented block than mashed
+      // into the trailing ="..." spot.
+      if (v.includes("\n") && v.length > 120) {
+        line += `\n${indent}  value:\n${v.split("\n").map((l: string) => `${indent}    ${l}`).join("\n")}`;
+      } else {
+        line += `="${v}"`;
+      }
+    }
+    line += ` @(${el.bounds.x},${el.bounds.y} ${el.bounds.width}x${el.bounds.height})`;
+    if (el.isTarget) line += ` \u2190 YOU ARE HERE`;
+    lines.push(line);
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Lazy initializer for the auto-guide controller. Called when
+ * `autoGuideEnabled` is true (at startup or when SET_CONFIG flips it).
+ *
+ * All `./guide/*` modules are loaded via `await import(...)` to keep them
+ * out of the main bundle's startup cost — webpack splits them into a
+ * separate chunk that's only fetched when the user enables Auto-Guide.
+ */
+async function initGuideControllerIfNeeded(): Promise<void> {
+  if (!appConfig?.autoGuideEnabled) return;
+  const ctrlMod = await import("./guide/guide-controller");
+  if (ctrlMod.isControllerInitialized()) return; // already wired
+  const overlayMod = await import("./guide/guide-overlay");
+  const winMod = await import("./guide/active-window");
+  const { getCursorPos } = await import("./context-reader");
+
+  ctrlMod.getController({
+    overlay: {
+      show: overlayMod.showOverlay,
+      hide: overlayMod.hideOverlay,
+      setOwlMode: overlayMod.setOwlMode,
+      hideBubble: overlayMod.hideBubble,
+    },
+    getActiveHwnd: winMod.getActiveHwnd,
+    getCursorPos,
+    hidePanel: () => {
+      const win = getPanelWindow();
+      if (win && !win.isDestroyed() && win.isVisible()) {
+        win.hide();
+      }
+    },
+    showPanel: () => {
+      const win = getPanelWindow();
+      if (win && !win.isDestroyed() && !win.isVisible()) {
+        win.show();
+      }
+    },
+    showPanelAndFocusInput: () => {
+      const win = getPanelWindow();
+      if (win && !win.isDestroyed()) {
+        if (!win.isVisible()) win.show();
+        win.focus();
+        win.webContents.send(IPC.FOCUS_INPUT);
+      }
+    },
+    sendFollowUp: async (actionDesc) => {
+      const win = getPanelWindow();
+      if (!win) return;
+      // Panel stays hidden during entire guide session — NEVER show it here
+      const { screen: electronScreen } = require("electron") as typeof import("electron");
+      // CRITICAL: use the display where the user's app actually is, NOT
+      // getPrimaryDisplay(). On multi-monitor setups the app may be on
+      // an extended monitor; capturing the primary would show the wrong
+      // screen and every coordinate would be offset or on the wrong display.
+      const cursor = getCursorPos();
+      // getCursorPos() returns PHYSICAL pixels (robotjs/Win32). getDisplayNearestPoint
+      // expects LOGICAL/DIP pixels. Passing physical to it selects the wrong display
+      // on multi-monitor setups with different DPI scales. We must find the display
+      // by checking which physical bounds contain the cursor.
+      let display = electronScreen.getPrimaryDisplay();
+      for (const d of electronScreen.getAllDisplays()) {
+        const left = Math.round(d.bounds.x * d.scaleFactor);
+        const top = Math.round(d.bounds.y * d.scaleFactor);
+        const right = Math.round((d.bounds.x + d.bounds.width) * d.scaleFactor);
+        const bottom = Math.round((d.bounds.y + d.bounds.height) * d.scaleFactor);
+        if (cursor.x >= left && cursor.x < right && cursor.y >= top && cursor.y < bottom) {
+          display = d;
+          break;
+        }
+      }
+      const sf = display.scaleFactor || 1;
+      const pw = Math.round(display.bounds.width * sf);
+      const ph = Math.round(display.bounds.height * sf);
+      log(`guide follow-up: capture display="${display.label}" bounds=${display.bounds.width}x${display.bounds.height} logical, ${pw}x${ph} physical @${sf}x, cursor=(${cursor.x},${cursor.y})`);
+
+      let imagePath: string | null = null;
+      let fresh: Awaited<ReturnType<typeof import("./context-reader").readContextAtPoint>> | null = null;
+      try {
+        const visionMod = await import("./vision");
+        const ctxReader = await import("./context-reader");
+        // Get the CURRENT active window, not the cached one from initial capture.
+        // The user may have opened a dialog or switched windows mid-guide.
+        const { setForegroundHwnd, getActiveHwnd } = await import("./guide/active-window");
+        const currentActiveHwnd = await getActiveHwnd();
+        // If MudrikNow panel is the active window, fall back to the cached context hwnd
+        const mudrikHwnd = win.getNativeWindowHandle().readInt32LE(0);
+        const targetHwnd = (currentActiveHwnd && currentActiveHwnd !== mudrikHwnd)
+          ? currentActiveHwnd
+          : (currentContext?.windowInfo?.hwnd || 0);
+        
+        // Only hide panel during actual screenshot capture, keep it visible otherwise
+        const wasVisible = win.isVisible();
+        
+        if (targetHwnd) {
+          try {
+            const ok = await setForegroundHwnd(targetHwnd);
+            log(`guide follow-up: setForegroundHwnd(${targetHwnd}) -> ${ok}`);
+            await new Promise((r) => setTimeout(r, 200));
+            const fg = await getActiveHwnd();
+            if (fg !== targetHwnd) {
+              log(`guide follow-up: foreground mismatch (got ${fg}, want ${targetHwnd}) — retrying setForegroundHwnd`);
+              const ok2 = await setForegroundHwnd(targetHwnd);
+              log(`guide follow-up: setForegroundHwnd retry -> ${ok2}`);
+              await new Promise((r) => setTimeout(r, 150));
+            } else {
+              await new Promise((r) => setTimeout(r, 150));
+            }
+          } catch (e: any) {
+            log(`guide follow-up: setForegroundHwnd failed (${e?.message || e}) — proceeding anyway`);
+            await new Promise((r) => setTimeout(r, 350));
+          }
+        } else {
+          await new Promise((r) => setTimeout(r, 350));
+        }
+        
+        // Hide panel only for the screenshot capture moment
+        if (wasVisible) {
+          try { win.blur(); } catch { /* best-effort */ }
+          win.hide();
+        }
+        
+        const point =
+          actionDesc.kind === "click"
+            ? { x: actionDesc.x, y: actionDesc.y }
+            : ctxReader.getCursorPos();
+        
+        // Run screenshot + UIA in parallel
+        const shotPromise = visionMod.captureAndOptimize(
+          Math.round(display.bounds.x * sf),
+          Math.round(display.bounds.y * sf),
+          Math.round((display.bounds.x + display.bounds.width) * sf),
+          Math.round((display.bounds.y + display.bounds.height) * sf),
+          { noGrid: false },
+        ).catch((e: any) => { log(`guide follow-up: screenshot failed (${e?.message || e})`); return null as string | null; });
+        const ctxPromise = ctxReader.readContextAtPoint(point.x, point.y, targetHwnd).catch((e: any) => {
+          log(`guide follow-up: UIA capture failed (${e?.message || e}) — falling back to cached context`);
+          return null;
+        });
+        
+        const [shot, ctx] = await Promise.all([shotPromise, ctxPromise]);
+        imagePath = shot;
+        fresh = ctx;
+        
+        log(`guide follow-up: capture complete — screenshot=${imagePath ? "yes" : "no"} uia=${fresh ? `yes (active="${fresh.windowInfo?.title || "?"}")` : "no"}`);
+      } catch (err: any) {
+        log(`guide follow-up: capture path errored (${err?.message || err}) — proceeding without`);
+        // Panel stays hidden during guide session
+      }
+
+      // Build prompt from the FRESH capture (panel-hidden window). Falls
+      // back to currentContext if UIA failed entirely.
+      const ctx = fresh || currentContext;
+      const desc =
+        actionDesc.kind === "click"
+          ? `User clicked at (${actionDesc.x}, ${actionDesc.y}).`
+          : `"${actionDesc.choice}"`;
+      const screen = ctx
+        ? `Active window: ${ctx.windowInfo?.title || "unknown"}. Element under cursor: ${ctx.element?.name || "none"} (${ctx.element?.type || "?"}).`
+        : "No screen context captured.";
+
+      // Pre-enumerate clickable UIA candidates from the freshly-captured tree
+      // (now correctly the TARGET app's tree, not MudrikNow's). Cap to 50 for
+      // prompt cost; convert physical->logical bounds to match overlay coords.
+      // Interactable control types we surface to the AI as candidates.
+      // Includes everything the user can click, type into, select, or
+      // follow as a link. Chromium-based apps map many DOM elements to
+      // generic UIA types (Custom, Group, Pane, Document) so we include
+      // those too — better to show one extra layout container than to
+      // miss the actual button hosted inside it.
+      const CLICKABLE_TYPES = new Set([
+        // Standard interactives
+        "ControlType.Button","ControlType.MenuItem","ControlType.ListItem",
+        "ControlType.Edit","ControlType.Hyperlink","ControlType.CheckBox",
+        "ControlType.RadioButton","ControlType.ComboBox","ControlType.TabItem",
+        "ControlType.TreeItem","ControlType.SplitButton","ControlType.Tab",
+        "ControlType.Header","ControlType.HeaderItem",
+        // Tabular / data
+        "ControlType.DataItem","ControlType.DataGrid","ControlType.Cell",
+        // Chromium / web-rendered apps map most clickable things to these
+        "ControlType.Custom","ControlType.Image",
+        // Document-area editables (text editors, code editors, content surfaces)
+        "ControlType.Document","ControlType.Text",
+        // Containers that the AI may need to address (toolbar items, slider)
+        "ControlType.Slider","ControlType.Spinner","ControlType.Thumb",
+        "ControlType.ToolBar","ControlType.MenuBar",
+      ]);
+      let candidatesBlock = "";
+      const tree = (fresh as any)?.windowTree;
+      if (Array.isArray(tree) && tree.length > 0) {
+        // Per-type quota selection. The old code did plain `.slice(0, 50)`
+        // on tree-order, which is depth-first traversal of the UIA tree.
+        // For apps like File Explorer where the content pane is visited
+        // BEFORE the sibling toolbar/navigation panes, the 50-cap filled
+        // entirely with file-list rows / column headers / status bar,
+        // leaving NO toolbar buttons (New, Cut, Copy) or nav items (Home,
+        // Gallery, Desktop) in the prompt. The AI then couldn't point at
+        // any of them. Fix: quota-pick per control-type tier so each
+        // semantic category gets representation, then fill remaining
+        // slots with whatever's left in tree order.
+        const allClickables = tree.filter((el: any) =>
+          el && CLICKABLE_TYPES.has(el.type) && el.bounds && el.bounds.width > 0 && el.bounds.height > 0
+        );
+        // Tiers ordered by typical action-target value. Toolbar/menu buttons
+        // are the most common AI targets (commands), then navigation/tabs,
+        // then form inputs, then list/data items, then chrome leftovers.
+        const tierOf = (t: string): number => {
+          if (t === "ControlType.Button" || t === "ControlType.SplitButton" ||
+              t === "ControlType.MenuItem" || t === "ControlType.ToolBar" ||
+              t === "ControlType.MenuBar") return 0;
+          if (t === "ControlType.TreeItem" || t === "ControlType.TabItem" ||
+              t === "ControlType.Tab" || t === "ControlType.Hyperlink") return 1;
+          if (t === "ControlType.Edit" || t === "ControlType.ComboBox" ||
+              t === "ControlType.CheckBox" || t === "ControlType.RadioButton" ||
+              t === "ControlType.Spinner" || t === "ControlType.Slider") return 2;
+          if (t === "ControlType.ListItem" || t === "ControlType.DataItem" ||
+              t === "ControlType.Cell") return 3;
+          if (t === "ControlType.Header" || t === "ControlType.HeaderItem" ||
+              t === "ControlType.Thumb") return 4;
+          if (t === "ControlType.Custom" || t === "ControlType.Image" ||
+              t === "ControlType.Document" || t === "ControlType.Text" ||
+              t === "ControlType.DataGrid") return 5;
+          return 6;
+        };
+        // Per-tier quotas — sum well above the final cap so a tier with
+        // sparse content doesn't waste slots. Actions and nav get the
+        // biggest allotments; list/data items get fewer because dozens of
+        // them (file rows, cells) repeat the same control type and the
+        // AI doesn't need every single one to target a specific row.
+        const TIER_QUOTAS = [25, 20, 15, 20, 8, 8, 4];
+        const CANDIDATE_CAP = 75;
+        const buckets: any[][] = [[], [], [], [], [], [], []];
+        for (const el of allClickables) buckets[tierOf(el.type)].push(el);
+        const selected: any[] = [];
+        for (let tier = 0; tier < buckets.length && selected.length < CANDIDATE_CAP; tier++) {
+          const quota = Math.min(TIER_QUOTAS[tier], CANDIDATE_CAP - selected.length);
+          selected.push(...buckets[tier].slice(0, quota));
+        }
+        // Fill remaining slots from leftovers across all tiers in tree
+        // order (preserves the "user likely wants this nearby element"
+        // signal from UIA's natural traversal).
+        if (selected.length < CANDIDATE_CAP) {
+          const taken = new Set(selected);
+          for (const el of allClickables) {
+            if (selected.length >= CANDIDATE_CAP) break;
+            if (!taken.has(el)) selected.push(el);
+          }
+        }
+        if (selected.length > 0) {
+          const lines = selected.map((el: any, i: number) => {
+            // Show PHYSICAL coordinates (same space as screenshot and screen info).
+            // The AI estimates from the screenshot in this same physical pixel space.
+            const bx = el.bounds.x;
+            const by = el.bounds.y;
+            const bw = el.bounds.width;
+            const bh = el.bounds.height;
+            const t = el.type.replace(/^ControlType\./, "");
+            const name = (el.name || "").replace(/\s+/g, " ").slice(0, 60);
+            const aid = el.automationId ? ` automationId="${el.automationId}"` : "";
+            return `[${i}] ${t} "${name}"${aid} @(${bx},${by} ${bw}x${bh})`;
+          });
+          candidatesBlock = `\n\nUIA CLICKABLE CANDIDATES in the active window (the AUTHORITATIVE list — pick one for target.selector/automationId/uiaBounds, or set target:null):\n${lines.join("\n")}\n`;
+          log(`guide follow-up: enumerated ${selected.length} clickable candidates (from ${allClickables.length} total) via per-tier quotas`);
+        }
+      }
+
+      const cellW = Math.max(60, Math.round(pw / 20));
+      const cellH = Math.max(60, Math.round(ph / 20));
+      const prompt = `--- USER MESSAGE ---\n${desc}\n--- END MESSAGE ---\n\n${screen}${candidatesBlock}\n\nA fresh full-screen screenshot is attached with a faint numbered coordinate grid overlay. Each grid cell is approximately ${cellW}×${cellH} pixels. Top-left cell is (0,0). When estimating positions from the screenshot, count grid cells from the top-left for accuracy: x ≈ column × ${cellW}, y ≈ row × ${cellH}. The user's screen is ${pw}×${ph} pixels (DPI scale ${sf}×). Coordinates in the candidates list above and in the screenshot are in the SAME physical pixel space.\n\nTarget rules (BINARY — pick one):\n1. Target IS in the candidates list above → COPY its name as selector, its automationId verbatim, its bounds verbatim into target.uiaBounds. The owl will land pixel-perfect.\n2. Target is NOT in the list, OR you're not sure, OR the step has no single point target (typing, scrolling, keyboard shortcut) → set target:null. The user navigates from your caption alone — better than a misplaced owl.\n3. For Chromium/Electron apps where UIA is blind: estimate the position from the screenshot by counting grid cells and set target.guessBounds with your estimate.\n\nNEVER set both uiaBounds and guessBounds. Pick one: uiaBounds when the target IS in the UIA list, guessBounds when estimating from the screenshot, null when unsure.\n\nDo NOT include a "confidence" field — it's no longer used.\n\nIMPORTANT: if "Active window" above is NOT what you'd expect for the current step (e.g. you told the user to click in Excel but active window is "unknown" / "Shell" / a different app), the user likely IS still in their app — MudrikNow's panel hides briefly during recapture and Windows occasionally fails to restore the right foreground window. Trust the user's progress unless their captions clearly contradict it; only emit "click app in taskbar" if the candidates list AND the screenshot both confirm a different app is active.\n\nDecide the next guide marker (guide_step, guide_complete, or guide_abort).`;
+
+      // Stream tokens to the renderer for visibility; accumulate the response
+      // text; parse + dispatch guide markers when the subprocess exits.
+      let buffer = "";
+      let receivedAnyText = false;
+      let errorSurfaced = false;
+      try {
+        await client.sendMessage(prompt, (event) => {
+          handleOpenCodeEvent(event, win);
+          if (event.type === "text" && event.part?.text) {
+            receivedAnyText = true;
+            buffer += event.part.text;
+          }
+          if (event.type === "error" && event.error?.message) {
+            errorSurfaced = true;
+          }
+        }, imagePath ? [imagePath] : undefined);
+      } finally {
+        if (imagePath) {
+          try { (await import("./vision")).cleanupImage(imagePath); } catch { /* best-effort */ }
+        }
+      }
+      try {
+        if (guideStoppedFlag) {
+          log("guide follow-up: STOP was hit — discarding buffered guide markers");
+        } else {
+          const { actions } = parseActionsFromResponse(buffer);
+          const guideTypes = new Set(["guide_offer","guide_step","guide_complete","guide_abort"]);
+          const guideActions = actions.filter((action) => guideTypes.has(action.type));
+          if (guideActions.length === 0) {
+            const m = await import("./guide/guide-controller");
+            const ctrl = m.isControllerInitialized() ? m.getController() : null;
+            const trimmedBuffer = buffer.trim();
+            if (!receivedAnyText || trimmedBuffer.length === 0) {
+              // OpenCode exited without producing text (silent failure) or only
+              // emitted an error. Don't kill the guide — the user can Retry and
+              // continue the same walkthrough because the controller stays in
+              // awaiting-ai and the next guide_step will be accepted.
+              log("guide follow-up: no text received — keeping guide alive for retry");
+              if (ctrl) {
+                try {
+                  const { t } = require("../shared/i18n") as typeof import("../shared/i18n");
+                  const lang = appConfig?.lang ?? "en";
+                  ctrl.setAwaitingAICaption(t(lang, "guideNoResponse"));
+                } catch {
+                  ctrl.setAwaitingAICaption("AI didn't respond — tap Retry to continue the guide.");
+                }
+              }
+            } else {
+              // The AI genuinely replied without guide markers. Show the real
+              // reply instead of injecting a fake "Guide cancelled" message.
+              // Reset the streamed text first so STREAM_DONE doesn't duplicate it.
+              log("guide follow-up: AI responded but no guide markers found — ending guide with reply text");
+              if (win && !win.isDestroyed()) {
+                win.webContents.send(IPC.STREAM_TEXT_RESET);
+              }
+              const replyText = extractGuideReplyText(trimmedBuffer);
+              if (ctrl) {
+                if (replyText) {
+                  ctrl.endWithReply(replyText);
+                } else {
+                  try {
+                    const { t } = require("../shared/i18n") as typeof import("../shared/i18n");
+                    const lang = appConfig?.lang ?? "en";
+                    ctrl.endWithReply(t(lang, "guideEnded"));
+                  } catch {
+                    ctrl.endWithReply("Guide ended.");
+                  }
+                }
+              }
+            }
+          } else {
+            for (const action of guideActions) {
+              const result = await executeAction(action, {
+                actionsEnabled: appConfig.actionsEnabled,
+                autoGuideEnabled: appConfig.autoGuideEnabled,
+              });
+              if (win && !win.isDestroyed()) {
+                win.webContents.send(IPC.ACTION_RESULT, { action, result });
+              }
+            }
+          }
+        }
+      } catch (err: any) {
+        log(`guide follow-up dispatch failed: ${err?.message || err}`);
+      }
+      if (win && !win.isDestroyed()) {
+        win.webContents.send(IPC.STREAM_DONE);
+      }
+    },
+    onStateUpdate: (state) => {
+      guidePhase = state.phase;
+      log(`GUIDE_STATE_UPDATE phase=${state.phase} options=${JSON.stringify(state.options || [])} caption=${state.caption ? "yes" : "no"} summary=${state.summary ? "yes" : "no"} finalMessage=${state.finalMessage ? JSON.stringify(state.finalMessage) : "none"}`);
+      const win = getPanelWindow();
+      if (win && !win.isDestroyed()) {
+        win.webContents.send(IPC.GUIDE_STATE_UPDATE, state);
+      }
+      // Mirror caption/options to overlay bubble
+      const overlayMod = require("./guide/guide-overlay") as typeof import("./guide/guide-overlay");
+      const theme = appConfig?.theme === "system"
+        ? (require("electron").nativeTheme.shouldUseDarkColors ? "dark" : "light")
+        : (appConfig?.theme || "light");
+      if (state.phase === "step-active" && state.caption) {
+        // Append the "Else" button to the overlay bubble only — the panel
+        // dock uses state.options directly (no Else) since the user can
+        // type in the chat input there.
+        const overlayOptions = state.elseOptionText
+          ? [...(state.options || []), state.elseOptionText]
+          : (state.options || []);
+        overlayMod.showBubble(state.caption, overlayOptions, theme);
+        overlayMod.setOwlMode("pointing");
+      } else if (state.phase === "waiting") {
+        overlayMod.showBubble("Waiting...", [], theme);
+        overlayMod.setOwlMode("thinking");
+      } else if (state.phase === "recapturing") {
+        overlayMod.showBubble("Capturing...", [], theme);
+        overlayMod.setOwlMode("thinking");
+      } else if (state.phase === "awaiting-ai") {
+        overlayMod.showBubble("Thinking...", [], theme);
+        overlayMod.setOwlMode("thinking");
+      } else if (state.phase === "idle" || state.phase === "offer") {
+        overlayMod.hideBubble();
+      }
+    },
+    getCancelledMessage: () => {
+      try {
+        const { t } = require("../shared/i18n") as typeof import("../shared/i18n");
+        return t(appConfig?.lang ?? "en", "guideCancelled");
+      } catch {
+        return "Guide cancelled.";
+      }
+    },
+    getOptionLabels: () => {
+      try {
+        const { t } = require("../shared/i18n") as typeof import("../shared/i18n");
+        const lang = appConfig?.lang ?? "en";
+        return { cancel: t(lang, "cancel"), somethingElse: t(lang, "somethingElse") };
+      } catch {
+        return { cancel: "Cancel", somethingElse: "Something else" };
+      }
+    },
+    resolveTargetBounds: async (target) => {
+      // Dual-bounds system (2026-05-24):
+      // - uiaBounds: AI copied from UIA candidate list (pixel-perfect)
+      // - guessBounds: AI estimated from screenshot (Chromium/web fallback)
+      // Priority: uiaBounds > guessBounds > null
+      // The AI should NEVER set both — pick one based on source.
+      if (target.uiaBounds) {
+        log(`resolveTargetBounds: trusting uiaBounds from UIA candidate list`);
+        return target.uiaBounds;
+      }
+      if (target.guessBounds) {
+        log(`resolveTargetBounds: trusting guessBounds from screenshot estimate`);
+        return target.guessBounds;
+      }
+      log(`resolveTargetBounds: no uiaBounds or guessBounds — no cursor will be shown`);
+      return null;
+    },
+  });
+  log("Guide controller initialized");
+}
+
+function formatVisibleWindows(windows: VisibleWindow[], activeWindowTitle?: string): string {
+  if (!windows || windows.length === 0) return "";
+  const lines: string[] = [];
+  for (const w of windows) {
+    let line = `  ${formatElementType(w.type)} "${w.name}" @(${w.bounds.x},${w.bounds.y} ${w.bounds.width}x${w.bounds.height})`;
+    if (w.name && activeWindowTitle && w.name === activeWindowTitle) line += ` \u2190 ACTIVE`;
+    lines.push(line);
+  }
+  return lines.join("\n");
+}
+
+export function registerIpcHandlers(
+  config: Config,
+  showPanel: (context: ContextPayload) => void,
+  hidePanel: () => void,
+  onConfigChange?: ConfigChangeListener
+): void {
+  hidePanelFn = hidePanel;
+  showPanelFn = showPanel;
+  appConfig = config;
+  configChangeListener = onConfigChange || null;
+  const workingDir = config.workingDir || process.cwd();
+  // Provision an isolated XDG_CONFIG_HOME for the OpenCode spawn — empty
+  // mcp/plugins/skills — so any MCP servers the user registered globally
+  // (Playwright, zai-mcp-server, etc.) are invisible to MudrikNow's subprocess.
+  // The runtime kill-switch stays as a second layer of defense.
+  const isolatedOpenCodeConfig = ensureIsolatedOpenCodeConfig(workingDir);
+  // Migrate any opencode data previous MudrikNow versions stored under isolated
+  // paths (<workingDir>/opencode-data/opencode/ or <workingDir>/opencode/) to
+  // the default opencode data dir, so a `opencode session list` from a
+  // terminal finds MudrikNow's sessions without any env-var setup.
+  migrateIsolatedOpenCodeDataToDefault(workingDir);
+  const allApiKeys = mergedApiKeys(config.apiKeys || {});
+  client = new OpenCodeClient(
+    config.model || "google/gemini-3.1-flash-lite",
+    workingDir,
+    allApiKeys,
+    isolatedOpenCodeConfig,
+    config.readOnlyCommandsEnabled,
+  );
+  log(`OpenCodeClient initialized: model=${config.model}, dir=${workingDir}, keys=${Object.keys(allApiKeys).length} (config=${Object.keys(config.apiKeys || {}).length}, auth=${Object.keys(readOpenCodeAuthKeys()).length}), isolatedConfig=${isolatedOpenCodeConfig}`);
+
+  ipcMain.on(IPC.DISMISS, () => {
+    log("DISMISS received");
+    hidePanel();
+  });
+
+  ipcMain.on(IPC.OPEN_EXTERNAL, (_e, url: unknown) => {
+    if (typeof url !== "string") return;
+    if (!/^https:\/\//i.test(url)) {
+      log(`OPEN_EXTERNAL rejected non-https url: ${url.slice(0, 80)}`);
+      return;
+    }
+    const { shell } = require("electron") as typeof import("electron");
+    shell.openExternal(url).catch((err: unknown) => log(`openExternal failed: ${String(err)}`));
+  });
+
+  ipcMain.on(IPC.MINIMIZE, () => {
+    log("MINIMIZE received — hiding panel, will notify when response arrives");
+    hidePanel();
+  });
+
+  // Real minimize to the Windows taskbar — NOT tray-hide. The panel normally
+  // runs skipTaskbar:true (floating overlay). To let the user click the
+  // taskbar to restore, we un-skip the taskbar so a button appears while
+  // minimized; the `restore` listener (wired in createWindow) flips it back
+  // to skipTaskbar:true so the panel returns to its tray-centric floating
+  // mode once focused again. Chat/session state is untouched (the window is
+  // minimized, not hidden/destroyed).
+  ipcMain.on(IPC.MINIMIZE_TO_TASKBAR, () => {
+    const win = getPanelWindow();
+    if (!win || win.isDestroyed()) return;
+    win.setSkipTaskbar(false);
+    win.minimize();
+    log("MINIMIZE_TO_TASKBAR: minimized to taskbar");
+  });
+
+  // Driven by the renderer's explicit resize grips (ResizeGrips.tsx). The
+  // panel is anchored top-left (cursor-first), so we keep x/y fixed and grow
+  // down/right. Clamp to the same min/max enforced on the BrowserWindow so
+  // the grips can't under/overshoot the layout. Width-only / height-only
+  // grips send the unchanged axis as-is.
+  ipcMain.on(IPC.RESIZE_PANEL, (_e, width: number, height: number) => {
+    const win = getPanelWindow();
+    if (!win || win.isDestroyed()) return;
+    const [x, y] = win.getPosition();
+    const w = Math.max(560, Math.min(900, Math.round(width)));
+    const h = Math.max(360, Math.round(height));
+    win.setBounds({ x, y, width: w, height: h });
+  });
+
+  ipcMain.on(IPC.TOGGLE_MAXIMIZE, () => {
+    const win = getPanelWindow();
+    if (!win || win.isDestroyed()) return;
+    const { screen } = require("electron") as typeof import("electron");
+    if (restoreBounds) {
+      win.setBounds(restoreBounds);
+      restoreBounds = null;
+    } else {
+      restoreBounds = win.getBounds();
+      const cursor = screen.getCursorScreenPoint();
+      const display = screen.getDisplayNearestPoint(cursor);
+      const wa = display.workArea;
+      const w = 780;
+      win.setBounds({
+        x: Math.round(wa.x + (wa.width - w) / 2),
+        y: wa.y,
+        width: w,
+        height: wa.height,
+      });
+    }
+  });
+
+  // WINDOW_MOVE IPC removed: dragging is handled natively via
+  // `-webkit-app-region: drag` on the panel header. See App.tsx. Keeping the
+  // IPC constant for backwards compatibility but the handler is intentionally
+  // absent — renderer calls will be silently ignored.
+
+  ipcMain.handle(IPC.GET_CONFIG, () => {
+    log(`GET_CONFIG -> ${JSON.stringify(config)}`);
+    return config;
+  });
+
+  ipcMain.handle(IPC.SET_CONFIG, (_e, newConfig: Partial<Config>) => {
+    log(`SET_CONFIG received: ${JSON.stringify(newConfig)}`);
+    const prev: Config = { ...config };
+    if (newConfig.model) {
+      const updated = [newConfig.model, ...config.recentModels.filter(m => m !== newConfig.model)].slice(0, 8);
+      config.recentModels = updated;
+      client.updateModel(newConfig.model);
+    }
+    if (Object.prototype.hasOwnProperty.call(newConfig, "modelVariant")) {
+      client.updateModelVariant(newConfig.modelVariant || "");
+    }
+    Object.assign(config, newConfig, { recentModels: config.recentModels });
+    if (newConfig.workingDir) {
+      const isolated = ensureIsolatedOpenCodeConfig(config.workingDir);
+      migrateIsolatedOpenCodeDataToDefault(config.workingDir);
+      client = new OpenCodeClient(config.model, config.workingDir, config.apiKeys, isolated, config.readOnlyCommandsEnabled);
+    }
+    // If keys changed without a full client rebuild, propagate the new map.
+    if (newConfig.apiKeys) {
+      client.updateApiKeys(mergedApiKeys(config.apiKeys));
+    }
+    // Re-provision the readonly agent + update kill-switch when the
+    // read-only commands flag flips. The agent file must reflect the new
+    // frontmatter (bash patterns vs deny) before the next message send.
+    // (readOnlyCommandsEnabled is now always true — toggle removed — but
+    // keep the propagation in case the field is ever re-introduced.)
+    log(`Config updated: model=${config.model}, recentModels=${JSON.stringify(config.recentModels)}`);
+    saveConfig(config);
+    if (configChangeListener) {
+      try { configChangeListener(config, prev); }
+      catch (e: any) { log(`Config change listener threw: ${e.message}`); }
+    }
+    // Initialize the auto-guide controller on the first false→true flip of
+    // autoGuideEnabled. We don't tear down on the reverse flip — the
+    // controller stays loaded but inactive. action-executor.ts gates guide
+    // markers on the live cfg.autoGuideEnabled, so disabling the flag stops
+    // new sessions immediately. Full teardown can be a future task.
+    if (newConfig.autoGuideEnabled === true && !prev.autoGuideEnabled) {
+      void initGuideControllerIfNeeded();
+    }
+    // If a model-visible setting (actions / guide) actually changed, queue a
+    // delta notice for the next follow-up so the AI overrides its earlier
+    // instruction without needing a fresh context capture.
+    const actionsChanged = newConfig.actionsEnabled !== undefined && newConfig.actionsEnabled !== prev.actionsEnabled;
+    const guideChanged = newConfig.autoGuideEnabled !== undefined && newConfig.autoGuideEnabled !== prev.autoGuideEnabled;
+    if (actionsChanged || guideChanged) {
+      settingsDirty = true;
+      log(`Model-visible setting changed (actions:${actionsChanged} guide:${guideChanged}) — delta queued for next send`);
+    }
+    return config;
+  });
+
+  ipcMain.handle(IPC.VALIDATE_MODEL, async (_e, modelId: string) => {
+    try {
+      const opencodeBin = findOpenCodeBin();
+      if (!opencodeBin) return { valid: false, error: "opencode not found" };
+      const cwd = appConfig.workingDir || os.homedir();
+      const env = buildCleanOpenCodeEnv(process.env, config.apiKeys);
+      const raw = await execOpenCode(opencodeBin, ["models"], { encoding: "utf-8", timeout: 30000, cwd, env, maxBuffer: 5*1024*1024 });
+      const allModels = raw.trim().split("\n").map((l: string) => l.trim()).filter(Boolean);
+      const match = allModels.find((m: string) => m.toLowerCase() === modelId.toLowerCase());
+      if (match) {
+        return { valid: true, modelId: match };
+      }
+      // Miss — classify it so the renderer can show a useful message and pick
+      // the right recovery (paste API key, or show suggestions).
+      const provider = providerFromModelId(modelId);
+      const hasSlash = modelId.includes("/");
+      const known = knownProviderNames.includes(provider.toLowerCase());
+      const providerHasAnyModel = allModels.some((m: string) =>
+        providerFromModelId(m).toLowerCase() === provider.toLowerCase(),
+      );
+      const needsAuth = !providerHasAnyModel && !!provider && hasSlash;
+      log(`VALIDATE_MODEL miss: modelId=${modelId}, provider=${provider}, known=${known}, hasSlash=${hasSlash}, needsAuth=${needsAuth}`);
+
+      // Pick the most helpful error text. Order of priority:
+      //   1. No slash → "wrong format" hint, since neither auth nor model
+      //      lookup can succeed without it.
+      //   2. Unknown provider name → tell the user the provider doesn't
+      //      exist (typo? made-up?). This is more honest than "needs auth",
+      //      which would just bounce them into a dead-end key prompt.
+      //   3. Known provider, no models visible → "needs auth" prompt.
+      //   4. Provider authed, model name wrong → "model not found" plus a
+      //      list of the provider's actually-available models.
+      let error: string;
+      let suggestions: string[] = [];
+      const queryTail = modelId.split("/").pop() || "";
+      if (!hasSlash) {
+        error = `Model must be in the form "provider/model-name" (e.g. "anthropic/claude-3-5-sonnet-20241022"). Got "${modelId}".`;
+      } else if (!known) {
+        error = `Unknown provider "${provider}". Known providers: ${knownProviderNames.join(", ")}.`;
+      } else if (needsAuth) {
+        error = `Provider "${provider}" is not authenticated. Add an API key to use its models.`;
+      } else {
+        error = `Model "${modelId}" not found for provider "${provider}".`;
+        const providerModels = allModels.filter((m: string) =>
+          providerFromModelId(m).toLowerCase() === provider.toLowerCase(),
+        );
+        if (providerModels.length > 0) {
+          suggestions = providerModels.slice(0, 6);
+        } else {
+          suggestions = allModels
+            .filter((m: string) => m.toLowerCase().includes(queryTail.toLowerCase()))
+            .slice(0, 5);
+        }
+      }
+      return {
+        valid: false,
+        error,
+        suggestions,
+        needsAuth,
+        provider: needsAuth ? provider : undefined,
+      };
+    } catch (err: any) {
+      return { valid: false, error: err.message };
+    }
+  });
+
+  /**
+   * Persist an API key for the named provider and refresh the OpenCode
+   * client's env map so the next `opencode run` / `opencode models` call
+   * sees it. When `verify` is true and the key is non-empty, runs a real
+   * pre-flight check first via VERIFY_KEY — on failure the key is NOT saved
+   * and { ok:false, code:"auth_failed", ... } is returned so the renderer can
+   * show the classified reason. An empty key always clears (no verify).
+   */
+  ipcMain.handle(IPC.SAVE_API_KEY, async (_e, provider: string, key: string, verify?: boolean) => {
+    if (!provider) return { ok: false, error: "provider is required" };
+    const normalized = provider.toLowerCase();
+    const trimmed = (key || "").trim();
+    if (verify && trimmed) {
+      const catalog = await getCatalog();
+      const wd = appConfig.workingDir || app.getPath("userData");
+      const verdict = await verifyProviderKey(normalized, trimmed, catalog, wd, ensureIsolatedOpenCodeConfig(wd));
+      if (!verdict.ok && (verdict.category === "AUTH_INVALID" || verdict.category === "AUTH_MISSING")) {
+        return { ok: false, code: "auth_failed", category: verdict.category, message: verdict.message };
+      }
+    }
+    const map = { ...(config.apiKeys || {}) };
+    if (trimmed) {
+      map[normalized] = trimmed;
+    } else {
+      delete map[normalized];
+    }
+    config.apiKeys = map;
+    client.updateApiKeys(mergedApiKeys(map));
+    saveConfig(config);
+    // Mirror into OpenCode's auth.json so a plain `opencode` invocation from
+    // a terminal sees the same credentials MudrikNow uses internally.
+    writeOpenCodeAuth(normalized, trimmed || null);
+    log(`SAVE_API_KEY: provider=${provider} (${trimmed ? "set" : "cleared"}${verify ? ", verified" : ""}), total providers=${Object.keys(map).length}`);
+    return { ok: true };
+  });
+
+  /**
+   * Remove a model from the recentModels list. If the removed entry was the
+   * currently-active model, switch to the next remaining one (or keep the
+   * current model if the list would become empty — we never let the user
+   * orphan themselves).
+   */
+  ipcMain.handle(IPC.REMOVE_MODEL, (_e, modelToRemove: string) => {
+    if (!modelToRemove) return config;
+    const filtered = config.recentModels.filter((m) => m !== modelToRemove);
+    if (filtered.length === 0) {
+      log(`REMOVE_MODEL ignored: would empty the list (model=${modelToRemove})`);
+      return config;
+    }
+    config.recentModels = filtered;
+    if (modelToRemove === config.model) {
+      config.model = filtered[0];
+      client.updateModel(filtered[0]);
+      log(`REMOVE_MODEL: removed current model ${modelToRemove}, switched to ${filtered[0]}`);
+    } else {
+      log(`REMOVE_MODEL: removed ${modelToRemove}, active model ${config.model} unchanged`);
+    }
+    // Cascade: if no remaining model uses this provider, drop the saved key
+    // (both from MudrikNow's config and OpenCode's auth.json) so the credential
+    // doesn't sit on disk for a provider the user no longer wants.
+    const removedProvider = providerFromModelId(modelToRemove).toLowerCase();
+    const stillUsed = filtered.some((m) => providerFromModelId(m).toLowerCase() === removedProvider);
+    if (!stillUsed && config.apiKeys && removedProvider in config.apiKeys) {
+      const nextKeys = { ...config.apiKeys };
+      delete nextKeys[removedProvider];
+      config.apiKeys = nextKeys;
+      client.updateApiKeys(mergedApiKeys(nextKeys));
+      writeOpenCodeAuth(removedProvider, null);
+      log(`REMOVE_MODEL: cleared API key for provider=${removedProvider} (no remaining models use it)`);
+    }
+    saveConfig(config);
+    return config;
+  });
+
+  /**
+   * Remove a saved API key for a provider (both MudrikNow's config and
+   * OpenCode's auth.json mirror). The empty-key clear path already existed
+   * inside SAVE_API_KEY but was unwired in the UI; this exposes it explicitly
+   * so the settings panel can offer a "Remove key" affordance.
+   */
+  ipcMain.handle(IPC.REMOVE_API_KEY, (_e, provider: string) => {
+    if (!provider) return { ok: false, error: "provider is required" };
+    const normalized = provider.toLowerCase();
+    if (config.apiKeys && normalized in config.apiKeys) {
+      const next = { ...config.apiKeys };
+      delete next[normalized];
+      config.apiKeys = next;
+      client.updateApiKeys(mergedApiKeys(next));
+      saveConfig(config);
+    }
+    writeOpenCodeAuth(normalized, null);
+    log(`REMOVE_API_KEY: cleared provider=${normalized}`);
+    return { ok: true };
+  });
+
+  /**
+   * List all known providers with live authentication status. Merges the
+   * models.dev catalog (display names, logos) with credentials detected in
+   * OpenCode's auth.json and the shell environment.
+   */
+  ipcMain.handle(IPC.LIST_PROVIDERS, async (): Promise<ProviderStatus[]> => {
+    const catalog = await getCatalog();
+    const authKeys = readOpenCodeAuthKeys();
+    const ids = new Set<string>([...Object.keys(catalog), ...Object.keys(authKeys)]);
+    const out: ProviderStatus[] = [];
+    for (const id of ids) {
+      const lower = id.toLowerCase();
+      const c = catalog[lower];
+      let source: "auth.json" | "env" | "none" = "none";
+      if (authKeys[lower]) {
+        source = "auth.json";
+      } else {
+        // Check shell env via the catalog's own env-var name (authoritative),
+        // falling back to the convention-based name.
+        const envName = envVarFromCatalog(lower, catalog) || envVarForProvider(lower);
+        if (process.env[envName]) source = "env";
+      }
+      out.push({
+        id: lower,
+        name: providerDisplayName(lower, catalog),
+        logoUrl: getLogoUrl(lower),
+        keyUrl: getKeyUrl(lower, c?.doc),
+        authenticated: source !== "none",
+        source,
+        free: isFreeProvider(lower),
+      });
+    }
+    return out;
+  });
+
+  // Session cache for LIST_MODELS: provider → { at, models }. Avoids re-running
+  // `opencode models <p> --verbose` (a 1-3s subprocess) on every settings open.
+  const modelsCache = new Map<string, { at: number; models: ModelDisplay[] }>();
+  const MODELS_CACHE_TTL_MS = 5 * 60 * 1000;
+
+  // (model-list verbose parser lives in src/main/models-parser.ts so it's
+  //  unit-tested — the multi-segment id regression is covered there.)
+
+  /**
+   * List the models available for a provider. Live data comes from
+   * `opencode models <provider> --verbose` (with the user's current keys);
+   * on any failure we fall back to the catalog snapshot so the picker stays
+   * browseable (entries flagged authRequired so the UI can prompt to connect).
+   */
+  ipcMain.handle(IPC.LIST_MODELS, async (_e, providerId: string): Promise<ModelDisplay[]> => {
+    const pid = (providerId || "").toLowerCase();
+    const cached = modelsCache.get(pid);
+    if (cached && Date.now() - cached.at < MODELS_CACHE_TTL_MS) return cached.models;
+
+    const catalog = await getCatalog();
+    const fallbackFromCatalog = (): ModelDisplay[] => {
+      const p = catalog[pid];
+      if (!p) return [];
+      return Object.values(p.models).map((mm) => ({
+        id: `${p.id}/${mm.id}`,
+        name: mm.name,
+        provider: pid,
+        attachment: mm.attachment,
+        reasoning: mm.reasoning,
+        toolCall: true,
+        authRequired: true,
+        effortOptions: mm.effortOptions,
+      }));
+    };
+
+    const bin = findOpenCodeBin();
+    if (!bin) {
+      const fb = fallbackFromCatalog();
+      modelsCache.set(pid, { at: Date.now(), models: fb });
+      return fb;
+    }
+    try {
+      const isNative = isNativeOpenCodeBin(bin);
+      const cmd = isNative ? bin : "node";
+      const args = isNative ? ["models", pid, "--verbose"] : [bin, "models", pid, "--verbose"];
+      const env = buildCleanOpenCodeEnv(process.env, mergedApiKeys(config.apiKeys));
+      const raw = await new Promise<string>((res, rej) => {
+        const { execFile } = require("child_process");
+        execFile(cmd, args, { env, encoding: "utf-8", timeout: 30000, maxBuffer: 5 * 1024 * 1024, cwd: appConfig.workingDir || os.homedir() }, (err: any, stdout: string) => err ? rej(err) : res(stdout));
+      });
+      let parsed = parseVerboseModels(raw, pid);
+      // Enrich with effort options from the catalog (verbose doesn't carry them).
+      for (const m of parsed) {
+        m.effortOptions = getEffortOptions(catalog, m.id);
+      }
+      // If the provider isn't authenticated, opencode prints an error to
+      // stderr and stdout is empty → fall back to catalog so the UI can show
+      // models with an "auth required" nudge.
+      let models: ModelDisplay[] = parsed.length > 0 ? parsed : fallbackFromCatalog();
+      modelsCache.set(pid, { at: Date.now(), models });
+      return models;
+    } catch (err: any) {
+      log(`LIST_MODELS fallback for ${pid}: ${err.message}`);
+      const fb = fallbackFromCatalog();
+      modelsCache.set(pid, { at: Date.now(), models: fb });
+      return fb;
+    }
+  });
+
+  /**
+   * Real pre-flight key verification. Delegates to key-verifier.ts which
+   * spawns `opencode run` with the candidate key in an isolated environment
+   * and classifies the result. The key is NOT persisted here — the caller
+   * (SAVE_API_KEY with verify, or the renderer's Verify button) decides what
+   * to do with the verdict.
+   */
+  ipcMain.handle(IPC.VERIFY_KEY, async (_e, providerId: string, key: string) => {
+    const catalog = await getCatalog();
+    const workingDir = appConfig.workingDir || app.getPath("userData");
+    const isolatedConfigDir = ensureIsolatedOpenCodeConfig(workingDir);
+    return verifyProviderKey(providerId, key, catalog, workingDir, isolatedConfigDir);
+  });
+
+  /**
+   * Look up the supported reasoning-effort variants for a model id
+   * (`provider/model`) from the models.dev catalog. The composer variant picker
+   * uses this to decide whether to show + what options to list. Returns []
+   * when the model has no effort variants (picker hidden).
+   */
+  ipcMain.handle(IPC.GET_MODEL_EFFORT_OPTIONS, async (_e, modelId: string): Promise<string[]> => {
+    const catalog = await getCatalog();
+    return getEffortOptions(catalog, modelId || "") || [];
+  });
+
+  ipcMain.on(IPC.NEW_SESSION, () => {
+    log("NEW_SESSION: resetting OpenCode session — preserving context/image");
+    client.resetSession();
+    contextNeedsSending = true;
+    hasSentFirstMessage = false;
+    // Preserve currentContext, areaImagePath, isAreaContext, areaElements so
+    // the user's selection and attached image carry into the new chat. If a
+    // pointer-context screenshot is present, re-arm it for the next send
+    // (area images reattach automatically via the isAreaContext branch).
+    const hasPointerImage = !isAreaContext && !!currentContext?.imagePath;
+    if (hasPointerImage) {
+      attachScreenshotNext = true;
+      log(`NEW_SESSION: re-arming pointer screenshot for next send`);
+    }
+    const win = getPanelWindow();
+    if (win) {
+      win.webContents.send(IPC.SESSION_RESET, { hasImage: hasPointerImage || (isAreaContext && !!areaImagePath) });
+    }
+  });
+
+  ipcMain.on(IPC.STOP_RESPONSE, async () => {
+    log("STOP_RESPONSE received — killing active process");
+    userStoppedCurrentResponse = true;
+    // Stop means stop everything. If a guide is mid-flight, fully cancel it
+    // (overlay hide, mouse hook stop, phase → idle). Without this, any
+    // buffered guide_step markers in the killed process's stdout would still
+    // get parsed and the next state-machine transition would fire — the
+    // owl would re-appear, mouse hook would re-arm, "trying again" loop.
+    if (guideIsActive()) {
+      log("STOP during active guide — cancelling guide session locally");
+      guideStoppedFlag = true;
+      try {
+        const m = await import("./guide/guide-controller");
+        if (m.isControllerInitialized()) {
+          await m.getController().cancel();
+        }
+      } catch (err: any) {
+        log(`STOP guide cancel errored (non-fatal): ${err?.message || err}`);
+      }
+    }
+    client.kill();
+    // Tell renderer the stream is done so it can drop the "thinking" UI.
+    // No error message — the stop was deliberate.
+    const win = getPanelWindow();
+    if (win) win.webContents.send(IPC.STREAM_DONE);
+  });
+
+  ipcMain.on(IPC.SEND_PROMPT, async (_e, prompt: string) => {
+    log(`SEND_PROMPT: "${prompt.slice(0, 80)}..."`);
+    log(`hasSession=${client.hasSession()}, contextNeedsSending=${contextNeedsSending}, hasSentFirstMessage=${hasSentFirstMessage}, isAreaContext=${isAreaContext}`);
+    log(`currentContext is ${currentContext ? `set: element="${currentContext.element?.name}" type="${currentContext.element?.type}" area=${isAreaContext} image=${currentContext.imagePath ? currentContext.imagePath.slice(-40) : "none"}` : "NULL"}`);
+    const win = getPanelWindow();
+    if (!win) {
+      log("ERROR: No window found for SEND_PROMPT");
+      return;
+    }
+
+    fullResponseText = "";
+    userStoppedCurrentResponse = false;
+    const cycleTimer = startTimer("msg-cycle");
+
+    const isFollowUp = hasSentFirstMessage && !contextNeedsSending;
+    log(`isFollowUp=${isFollowUp} (hasSent=${hasSentFirstMessage}, needsSend=${contextNeedsSending})`);
+    log(`actionsEnabled=${config.actionsEnabled} (live — not snapshotted)`);
+    let fullPrompt: string;
+
+    // One-shot: if the user hit Stop during a guide, the next message they
+    // send carries a small note so the AI's conversation history reflects
+    // the cancellation. Without this, the AI's history ends mid-guide_step
+    // and it would silently resume the walkthrough on the next user reply.
+    let stopNote = "";
+    if (guideStoppedFlag) {
+      stopNote = "\n\n[Note: I cancelled the in-progress guide walkthrough. Treat this message as a fresh request — do NOT resume the guide unless I explicitly ask for it.]\n\n";
+      log("Consuming guideStoppedFlag — prepending cancellation note to user prompt");
+      guideStoppedFlag = false;
+    }
+
+    if (isFollowUp) {
+      log("Follow-up message — skipping system prompt and context (already in session)");
+      // If the user toggled a model-visible setting (actions / guide) since
+      // the AI was last told, inject a timestamped "SETTINGS UPDATE" notice
+      // so the AI overrides its earlier instruction on this same session,
+      // without forcing a full context re-send.
+      let deltaNote = "";
+      if (settingsDirty) {
+        const now = settingsTimestamp();
+        const parts = settingsDeltaParts(settingsSnapshot, config.actionsEnabled, config.autoGuideEnabled);
+        if (parts.length > 0) {
+          deltaNote = buildSettingsDeltaBlock(settingsSnapshot, config.actionsEnabled, config.autoGuideEnabled, now);
+          settingsSnapshot = { actionsEnabled: config.actionsEnabled, autoGuideEnabled: config.autoGuideEnabled, time: now };
+          log(`Injecting settings delta into follow-up: ${parts.join(", ")}`);
+        }
+        settingsDirty = false;
+      }
+      fullPrompt = stopNote + deltaNote + prompt;
+    } else {
+      // First message of a new conversation — clear cached recent chats
+      // so the popup reflects the newly created session
+      recentChatsCache = null;
+      let contextBlock = "";
+      if (isAreaContext && areaElements.length > 0) {
+        contextBlock = `\n--- SCREEN CONTEXT (use this data for actions, do not describe it back to the user) ---\n`;
+        if (currentContext?.windowInfo) {
+          const wi = currentContext.windowInfo;
+          contextBlock += `\nACTIVE WINDOW: "${wi.title}" (app: ${wi.processName})`;
+          if (wi.processPath) {
+            const appBasename = wi.processPath.split(/[\\/]/).pop() || wi.processPath;
+            contextBlock += ` [${appBasename}]`;
+          }
+        }
+        contextBlock += `\nAREA SELECTION with ${areaElements.length} elements:`;
+        for (const el of areaElements) {
+          const indent = "  ".repeat(Math.max(0, (el as any).depth || 0));
+          const contained = el.isContained === true ? "inside" : "partial";
+          let line = `${indent}${formatElementType(el.type)}`;
+          if (el.name) line += ` "${el.name}"`;
+          if (el.automationId) line += ` [${el.automationId}]`;
+          if (el.value) line += `="${el.value.slice(0, 100)}"`;
+          line += ` @(${el.bounds.x},${el.bounds.y} ${el.bounds.width}x${el.bounds.height})`;
+          line += ` [${contained}]`;
+          contextBlock += `\n${line}`;
+        }
+        if (areaImagePath) {
+          const areaW = areaRect ? areaRect.x2 - areaRect.x1 : 0;
+          const areaH = areaRect ? areaRect.y2 - areaRect.y1 : 0;
+          if (screenshotMode === "area-chromium" && screenInfo) {
+            const si = screenInfo;
+            contextBlock += `\n\n[A screenshot of the selected area AND a full-screen screenshot are attached. This is a Chromium/Electron app — the UIA tree may NOT show web content (chat, scroll areas, inner pages). THE FULL-SCREEN SCREENSHOT IS THE PRIMARY SOURCE for what's on screen. Selected area: (${areaRect?.x1},${areaRect?.y1}) to (${areaRect?.x2},${areaRect?.y2}), size ${areaW}×${areaH} pixels. Full screen: ${si.physicalWidth}×${si.physicalHeight} pixels (DPI scale ${si.scaleFactor}×). Coordinates: left≈0, right≈${si.physicalWidth}, top≈0, bottom≈${si.physicalHeight}. Estimate pixel positions from the screenshots for any element. The UIA layout tree above may only show shell chrome — trust the screenshots for actual page content.]`;
+          } else if (areaRect) {
+            const areaInfo = `Selected area: (${areaRect.x1},${areaRect.y1}) to (${areaRect.x2},${areaRect.y2}), size ${areaW}×${areaH} pixels.`;
+            if (screenInfo) {
+              const si = screenInfo;
+              contextBlock += `\n\n[A screenshot of the selected area is attached. ${areaInfo} Full screen: ${si.physicalWidth}×${si.physicalHeight} pixels @${si.scaleFactor}× DPI scale. If a target element isn't in the UIA list above, estimate its position from the image.]`;
+            } else {
+              contextBlock += `\n\n[A screenshot of the selected area is attached. ${areaInfo} If a target element isn't in the UIA list above, estimate its position from the image.]`;
+            }
+          } else {
+            contextBlock += `\n\n[A screenshot of this area is attached as an image]`;
+          }
+        }
+        contextBlock += `\n--- END CONTEXT ---\n`;
+      } else if (currentContext) {
+        const el = currentContext.element;
+        contextBlock = `\n--- SCREEN CONTEXT (use this data for actions, do not describe it back to the user) ---\n`;
+        if (currentContext.windowInfo) {
+          const wi = currentContext.windowInfo;
+          contextBlock += `\nACTIVE WINDOW: "${wi.title}" (app: ${wi.processName})`;
+          if (wi.processPath) {
+            const appBasename = wi.processPath.split(/[\\/]/).pop() || wi.processPath;
+            contextBlock += ` [${appBasename}]`;
+          }
+        }
+        contextBlock += `\nCURSOR: ${currentContext.cursorPos.x}, ${currentContext.cursorPos.y}`;
+        contextBlock += `\n\nYOU POINTED AT:`;
+contextBlock += `\n  ${formatElementType(el.type)}`;
+        if (el.name) contextBlock += ` "${el.name}"`;
+        if (el.automationId) contextBlock += ` [${el.automationId}]`;
+        contextBlock += ` @(${el.bounds.x},${el.bounds.y} ${el.bounds.width}x${el.bounds.height})`;
+        if (el.value) {
+          // Match the PS-side GetDeepValue cap (20000 chars). Lower caps
+          // here would clamp document/PDF/long-form text the user is
+          // literally pointing at — defeats the whole point of the
+          // recent context-reader v20 bump.
+          const MAX_TARGET_VALUE = 20000;
+          const val = el.value.length > MAX_TARGET_VALUE ? el.value.slice(0, MAX_TARGET_VALUE) + `\n... (${el.value.length} chars total, showing first ${MAX_TARGET_VALUE})` : el.value;
+          if (val.includes("\n")) {
+            contextBlock += `\n  value:\n${val.split("\n").map((l: string) => `    ${l}`).join("\n")}`;
+          } else if (val.length > 200) {
+            contextBlock += `\n  value: ${val}`;
+          } else {
+            contextBlock += ` value="${val}"`;
+          }
+        }
+        if (el.parentChain && el.parentChain.length > 0) {
+          contextBlock += `\n  Hierarchy: ${el.parentChain.join(" > ")}`;
+        }
+        if (el.windowTitle) {
+          contextBlock += `\n  Window: ${el.windowTitle}`;
+        }
+
+        if (currentContext.visibleWindows && currentContext.visibleWindows.length > 0) {
+          contextBlock += `\n\nVISIBLE WINDOWS:`;
+          contextBlock += "\n" + formatVisibleWindows(currentContext.visibleWindows, currentContext.windowInfo?.title);
+        }
+
+        if (currentContext.windowTree && currentContext.windowTree.length > 0) {
+          contextBlock += `\n\nACTIVE WINDOW LAYOUT:`;
+          contextBlock += "\n" + formatWindowTree(currentContext.windowTree);
+        }
+
+        if (attachScreenshotNext && (currentContext.imagePath || areaImagePath)) {
+          if (screenshotMode === "chromium-auto" && screenInfo) {
+            const si = screenInfo;
+            const cellW = Math.max(60, Math.round(si.physicalWidth / 20));
+            const cellH = Math.max(60, Math.round(si.physicalHeight / 20));
+            contextBlock += `\n\n[A full-screen screenshot is attached with a faint numbered coordinate grid overlay. Each grid cell is approximately ${cellW}×${cellH} pixels. Top-left cell is (0,0). When estimating positions from the screenshot, count grid cells from the top-left for accuracy: x ≈ column × ${cellW}, y ≈ row × ${cellH}. This is a Chromium/Electron app — the UIA accessibility tree may NOT expose web content. THE SCREENSHOT IS THE PRIMARY SOURCE. Screen: ${si.physicalWidth}×${si.physicalHeight} pixels (DPI scale ${si.scaleFactor}×). Coordinate frame: left≈0, right≈${si.physicalWidth}, top≈0, bottom≈${si.physicalHeight}. The UIA layout tree above may only show shell chrome — trust the screenshot for actual page content.]`;
+          } else if (screenInfo) {
+            const si = screenInfo;
+            const cellW = Math.max(60, Math.round(si.physicalWidth / 20));
+            const cellH = Math.max(60, Math.round(si.physicalHeight / 20));
+            contextBlock += `\n\n[A screenshot is attached with a faint numbered coordinate grid overlay. Each grid cell is approximately ${cellW}×${cellH} pixels. Top-left cell is (0,0). When estimating positions, count grid cells from the top-left: x ≈ column × ${cellW}, y ≈ row × ${cellH}. Screen: ${si.physicalWidth}×${si.physicalHeight} pixels @${si.scaleFactor}× DPI scale.]`;
+          } else {
+            contextBlock += `\n\n[A screenshot showing what you pointed at is attached as an image]`;
+          }
+        }
+contextBlock += `\n--- END CONTEXT ---\n`;
+      }
+
+      // The overall context block budget. With v20's 15000-char tree
+      // values + 20000-char cursor value, the previous 16000 budget
+      // forced premature truncation on text-heavy apps (Word, VS Code,
+      // even the AI couldn't see the document body it was being asked
+      // about). 60000 chars ≈ 15k tokens — adds ~$0.02 worst-case at
+      // current provider rates, well worth the signal.
+      const MAX_CONTEXT_CHARS = 60000;
+      if (contextBlock.length > MAX_CONTEXT_CHARS) {
+        const targetSection = "YOU POINTED AT:";
+        const targetIdx = contextBlock.indexOf(targetSection);
+        if (targetIdx !== -1) {
+          const beforeTarget = contextBlock.substring(0, targetIdx);
+          const afterTarget = contextBlock.substring(targetIdx);
+          const afterTargetEnd = afterTarget.indexOf("\n\nVISIBLE WINDOWS:");
+          const afterTargetSection = afterTargetEnd !== -1 ? afterTarget.substring(0, afterTargetEnd) : afterTarget;
+          const tail = afterTargetEnd !== -1 ? afterTarget.substring(afterTargetEnd) : "";
+          const budget = MAX_CONTEXT_CHARS - beforeTarget.length - 200;
+          const trimmed = afterTargetSection.length > budget ? afterTargetSection.substring(0, budget) + `\n... (value truncated at ${budget} chars)` : afterTargetSection;
+          contextBlock = beforeTarget + trimmed + (tail ? "\n" + tail : "") + `\n--- END CONTEXT ---\n`;
+        }
+      }
+
+      const systemPrefix = `${buildSystemPrompt({
+        actionsEnabled: config.actionsEnabled,
+        autoGuideEnabled: config.autoGuideEnabled,
+      })}\n\n`;
+      // Tell the AI about the current actions permission. The toggle is
+      // LIVE — when the user flips it in settings, the next message carries
+      // a timestamped "SETTINGS UPDATE" notice (follow-up) or this fresh
+      // snapshot (new capture / new session). Either way the model sees the
+      // new value. Earlier turns of the same conversation may carry the
+      // opposite instruction in their history; the model must trust the
+      // newest SETTINGS timestamp over older ones.
+      const actionsBlock = config.actionsEnabled
+        ? `\n--- USER SETTING ---\nactionsEnabled: true — you MAY emit interactive action markers (click, type, paste, press_keys, invoke, set_value). This is the live, current setting; if earlier in this conversation you said you were in read-only mode, that instruction is now superseded.\n--- END SETTING ---\n`
+        : `\n--- USER SETTING ---\nactionsEnabled: false — READ-ONLY MODE. Do NOT emit interactive action markers (click, type, paste, press_keys, invoke, set_value) — they will be blocked and the user will see a "blocked" error. You MAY still emit copy_to_clipboard markers and COPY chips so the user can paste content themselves. NOTE: Auto-Guide mode is a SEPARATE setting — if guide mode is enabled, you MAY still emit guide_offer / guide_step markers; do not refuse a guide request just because desktop actions are off. This is the live, current setting; if earlier in this conversation you said actions were enabled, that instruction is now superseded. If the user wants to re-enable actions: tell them to toggle 'Allow desktop actions' in ⚙ settings — the change takes effect on their next message.\n--- END SETTING ---\n`;
+      // Timestamped snapshot of BOTH model-visible settings. The AI resolves
+      // conflicts with earlier turns by newest timestamp. Recorded so a
+      // later toggle delta can show old->new.
+      const nowSnap = settingsTimestamp();
+      const settingsBlock = buildSettingsSnapshotBlock(config.actionsEnabled, config.autoGuideEnabled, nowSnap);
+      fullPrompt = systemPrefix + contextBlock + actionsBlock + settingsBlock + `\n--- USER MESSAGE ---\n${stopNote}${prompt}\n--- END MESSAGE ---\n`;
+      settingsSnapshot = { actionsEnabled: config.actionsEnabled, autoGuideEnabled: config.autoGuideEnabled, time: nowSnap };
+      settingsDirty = false;
+    }
+
+    contextNeedsSending = false;
+    hasSentFirstMessage = true;
+
+    const imageFiles: string[] = [];
+    if (!isFollowUp) {
+      if (isAreaContext && areaImagePath) {
+        imageFiles.push(areaImagePath);
+      }
+    }
+    if (attachScreenshotNext) {
+      if (currentContext?.imagePath) {
+        imageFiles.push(currentContext.imagePath);
+        log(`Attaching screenshot per user request: ${currentContext.imagePath.slice(-40)}`);
+      } else if (areaImagePath) {
+        imageFiles.push(areaImagePath);
+        log(`Attaching area screenshot per user request: ${areaImagePath.slice(-40)}`);
+      }
+    }
+    attachScreenshotNext = false;
+    screenshotMode = "none";
+    screenInfo = null;
+
+    let receivedAnyText = false;
+    let timeoutFired = false;
+
+    // Idle-based timeout: fires after `IDLE_TIMEOUT_MS` of *silence* from
+    // OpenCode. Every event (step_start, tool_use, text, step_finish)
+    // resets the timer — so heavy reasoning / slow-first-token models
+    // don't trip it as long as they're making any progress. Once
+    // sendPromise resolves the subprocess is done, we cancel the timer
+    // entirely so action execution (which can take 30+ seconds for a
+    // chain of UIA paste/click ops) never fires this error.
+    //
+    // 3 min budget — covers genuinely slow models that reason at length
+    // over large code/context, plus transient provider issues that
+    // OpenCode's internal retry mechanism takes time to recover from.
+    // Was 5 min (too long — user perceives as "frozen"), then briefly
+    // 90s (too short — kills legitimately slow models). 3 min is the
+    // patience the user actually has.
+    const IDLE_TIMEOUT_MS = 180000; // 3 min
+    let idleTimer: NodeJS.Timeout | null = null;
+    const armIdleTimer = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        timeoutFired = true;
+        log(`TIMEOUT: No AI activity for ${IDLE_TIMEOUT_MS / 1000}s — killing process`);
+        client.kill();
+        emitStreamError(win, { category: "UNKNOWN", message: `AI hasn't responded in ${IDLE_TIMEOUT_MS / 60000} minutes. Likely a transient provider issue — please try sending again.`, recoveryAction: "retry" });
+      }, IDLE_TIMEOUT_MS);
+    };
+    const stopIdleTimer = () => {
+      if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+    };
+
+    // Track whether the client already surfaced a real error event. If so,
+    // the "no text received" fallback below would just stack a less-useful
+    // generic message on top of an already-specific one (e.g. "model name
+    // is invalid, check ⚙ Settings"). Skip the duplicate.
+    let errorEventSurfaced = false;
+    // Once the AI emits a guide_offer marker, the rest of the response is
+    // UI-driven (guide_step / options). Stop streaming preamble text into the
+    // chat so the user doesn't see flickering partial sentences before the
+    // guide UI takes over.
+    let guideOfferSeen = false;
+    try {
+      cycleTimer?.mark("prompt-built");
+      armIdleTimer();
+      await client.sendMessage(fullPrompt, (event: OpenCodeEvent) => {
+        if (timeoutFired) return;
+        armIdleTimer(); // reset on every event — AI is still making progress
+        if (event.type === "text" && event.part?.text) {
+          receivedAnyText = true;
+        }
+        if (event.type === "error" && event.error?.message) {
+          errorEventSurfaced = true;
+        }
+        // Detect guide_offer early so we can suppress its preamble text.
+        if (event.type === "text" && event.part?.text && !guideOfferSeen) {
+          const peek = event.part.text;
+          if (peek.includes('"type":"guide_offer"') || peek.includes("'type':'guide_offer'")) {
+            guideOfferSeen = true;
+            log("guide_offer detected in stream — suppressing further text tokens in chat");
+            win.webContents.send(IPC.STREAM_TEXT_RESET);
+            // Accumulate this chunk so parseActionsFromResponse sees the marker,
+            // but skip handleOpenCodeEvent so the preamble isn't rendered.
+            fullResponseText += peek;
+            return;
+          }
+        }
+        if (guideOfferSeen && event.type === "text") {
+          // Still accumulate for final action parsing, but don't render.
+          if (event.part?.text) {
+            fullResponseText += event.part.text;
+          }
+          return;
+        }
+        handleOpenCodeEvent(event, win);
+      }, imageFiles.length > 0 ? imageFiles : undefined);
+
+      // Subprocess is done. Action execution that follows can take as long
+      // as it needs — no more idle timeout from this point on.
+      stopIdleTimer();
+      if (timeoutFired) return;
+      log("OpenCode session completed");
+      cycleTimer?.mark("opencode-done");
+
+      // If the process exited cleanly but produced zero text (e.g. Bun segfault
+      // with exit code 0 suppressed), surface a friendly error instead of a
+      // blank response. EXCEPT:
+      // - when the user explicitly hit Stop (deliberate cancellation), OR
+      // - when the client already surfaced a specific error (model bad,
+      //   API key missing, etc.) — don't override that with the generic
+      //   fallback.
+      if (!receivedAnyText && fullResponseText.trim().length === 0) {
+        if (userStoppedCurrentResponse) {
+          log("No text received — but user manually stopped, skipping error");
+        } else if (errorEventSurfaced) {
+          log("No text received — but client already surfaced a specific error, skipping generic fallback");
+        } else {
+          log("No text received — sending friendly error");
+          emitStreamError(win, { category: "UNKNOWN", message: "No response was received from the AI. Please try again — if this keeps happening, restart MudrikNow.", recoveryAction: "retry" });
+        }
+        return;
+      }
+
+      const { actions, blocked } = parseActionsFromResponse(fullResponseText);
+      cycleTimer?.mark("actions-parsed");
+      if (blocked.length > 0) {
+        log(`Blocked ${blocked.length} disallowed action marker(s): ${blocked.map((b) => b.type).join(", ")}`);
+        for (const b of blocked) {
+          win.webContents.send(IPC.ACTION_RESULT, {
+            action: { type: b.type },
+            result: { success: false, error: `Blocked: ${b.reason}` },
+          });
+        }
+      }
+      // STOP-during-guide drops all guide markers from the buffer. The user
+      // just told us "stop everything" — re-arming the overlay/hook from
+      // partial buffered text would be exactly what they don't want.
+      // Non-guide actions still execute (e.g. a copy_to_clipboard the user
+      // asked for in the same response).
+      if (guideStoppedFlag) {
+        const guideTypes = ["guide_offer","guide_step","guide_complete","guide_abort"];
+        const dropped = actions.filter((a) => guideTypes.includes(a.type));
+        if (dropped.length > 0) {
+          log(`STOP active — discarded ${dropped.length} buffered guide marker(s): ${dropped.map((a) => a.type).join(", ")}`);
+          for (let i = actions.length - 1; i >= 0; i--) {
+            if (guideTypes.includes(actions[i].type)) actions.splice(i, 1);
+          }
+        }
+      }
+      if (actions.length > 0) {
+        log(`Found ${actions.length} actions in response: ${actions.map((a) => a.type).join(", ")}`);
+        for (let i = 0; i < actions.length; i++) {
+          const action = actions[i];
+          const actionTimer = startTimer(`action-exec[${i}]:${action.type}`);
+          // Read-only mode guard. Interactive actions are blocked with a clear
+          // reason; copy_to_clipboard still passes through.
+          if (!config.actionsEnabled && isInteractiveAction(action.type)) {
+            log(`BLOCKED (read-only): ${action.type}`);
+            win.webContents.send(IPC.ACTION_RESULT, {
+              action,
+              result: { success: false, error: "Desktop actions are disabled (read-only mode). Toggle 'Allow desktop actions' in settings to enable." },
+            });
+            continue;
+          }
+          log(`Executing action: type=${action.type} selector=${action.selector || ""}`);
+          const result: ActionResult = await executeAction(action, { actionsEnabled: config.actionsEnabled, autoGuideEnabled: config.autoGuideEnabled });
+          actionTimer?.done();
+          log(`Action result: success=${result.success}${result.error ? ` error=${result.error}` : ""}`);
+
+          win.webContents.send(IPC.ACTION_RESULT, { action, result });
+
+          if (!result.success) {
+            lastFailedAction = action;
+          }
+        }
+      }
+      cycleTimer?.mark("actions-executed");
+      win.webContents.send(IPC.STREAM_DONE);
+      cycleTimer?.done();
+    } catch (err: any) {
+      stopIdleTimer();
+      // If the timeout already surfaced an error to the user, swallow the
+      // resulting "kill" rejection so we don't double-error.
+      if (timeoutFired) return;
+      const msg = err?.message || String(err);
+      log(`ERROR from OpenCode: ${msg}`);
+      if (msg.startsWith("exit:")) {
+        const code = msg.replace("exit:", "");
+        emitStreamError(win, { category: "UNKNOWN", message: `Oops! The AI engine crashed (exit code ${code}). Please try again — if this keeps happening, restart MudrikNow.`, recoveryAction: "retry" });
+      } else {
+        // Classify so a kill-switch block surfaces as "try rephrasing" (BLOCKED)
+        // instead of a generic "something went wrong".
+        const c = classifyError(msg);
+        emitStreamError(win, { category: c.category, message: c.message, recoveryAction: c.recoveryAction });
+      }
+    }
+  });
+
+  ipcMain.on(IPC.EXECUTE_ACTION, async (_e, payload: unknown) => {
+    const win = getPanelWindow();
+    const v = validateAction(payload, { actionsEnabled: config.actionsEnabled, autoGuideEnabled: config.autoGuideEnabled });
+    if ("error" in v) {
+      log(`EXECUTE_ACTION REJECTED: ${v.error}`);
+      if (win) {
+        const rejectedType = typeof (payload as any)?.type === "string" ? (payload as any).type : "(unknown)";
+        win.webContents.send(IPC.ACTION_RESULT, {
+          action: { type: rejectedType },
+          result: { success: false, error: `Blocked: ${v.error}` },
+        });
+      }
+      return;
+    }
+    const action = v.action;
+    if (!config.actionsEnabled && isInteractiveAction(action.type)) {
+      log(`EXECUTE_ACTION BLOCKED (read-only): ${action.type}`);
+      if (win) {
+        win.webContents.send(IPC.ACTION_RESULT, {
+          action,
+          result: { success: false, error: "Desktop actions are disabled (read-only mode). Toggle 'Allow desktop actions' in settings to enable." },
+        });
+      }
+      return;
+    }
+    log(`EXECUTE_ACTION: type=${action.type}`);
+
+    // Hide panel before interactive actions so clicks/paste go to the target
+    // window, not the panel. The panel covers the target and steals focus.
+    if (win && isInteractiveAction(action.type)) {
+      log('Hiding panel before interactive action');
+      win.hide();
+      win.blur();
+      await new Promise((r) => setTimeout(r, 400)); // let target window regain focus
+    }
+
+    const result = await executeAction(action, { actionsEnabled: config.actionsEnabled, autoGuideEnabled: config.autoGuideEnabled });
+    log(`Action result: success=${result.success}${result.error ? ` error=${result.error}` : ""}`);
+
+    if (win && !win.isDestroyed()) {
+      win.show();
+      win.webContents.send(IPC.ACTION_RESULT, { action, result });
+    }
+  });
+
+  ipcMain.on(IPC.RETRY_ACTION, async (_e, payload: unknown) => {
+    const win = getPanelWindow();
+    const v = validateAction(payload, { actionsEnabled: config.actionsEnabled, autoGuideEnabled: config.autoGuideEnabled });
+    if ("error" in v) {
+      log(`RETRY_ACTION REJECTED: ${v.error}`);
+      if (win) {
+        const rejectedType = typeof (payload as any)?.type === "string" ? (payload as any).type : "(unknown)";
+        win.webContents.send(IPC.ACTION_RESULT, {
+          action: { type: rejectedType },
+          result: { success: false, error: `Blocked: ${v.error}` },
+        });
+      }
+      return;
+    }
+    const action = v.action;
+    if (!config.actionsEnabled && isInteractiveAction(action.type)) {
+      log(`RETRY_ACTION BLOCKED (read-only): ${action.type}`);
+      if (win) {
+        win.webContents.send(IPC.ACTION_RESULT, {
+          action,
+          result: { success: false, error: "Desktop actions are disabled (read-only mode). Toggle 'Allow desktop actions' in settings to enable." },
+        });
+      }
+      return;
+    }
+    log(`RETRY_ACTION: type=${action.type} selector=${action.selector || ""}`);
+
+    // Hide panel before interactive actions so clicks/paste go to the target
+    if (win && isInteractiveAction(action.type)) {
+      log('Hiding panel before retry action');
+      win.hide();
+      win.blur();
+      await new Promise((r) => setTimeout(r, 400));
+    }
+
+    const result = await executeAction(action, { actionsEnabled: config.actionsEnabled, autoGuideEnabled: config.autoGuideEnabled });
+    log(`Retry result: success=${result.success}${result.error ? ` error=${result.error}` : ""}`);
+
+    if (win && !win.isDestroyed()) {
+      win.show();
+      win.webContents.send(IPC.ACTION_RESULT, { action, result });
+    }
+  });
+
+  ipcMain.on(IPC.CAPTURE_CONTEXT, async () => {
+    const win = getPanelWindow();
+    const sendStatus = (captured: boolean) => {
+      if (win && !win.isDestroyed()) {
+        win.webContents.send(IPC.CONTEXT_CAPTURED, { captured });
+      }
+    };
+
+    log("CAPTURE_CONTEXT — reading UIA context + full screenshot at cursor");
+    try {
+      const { screen: electronScreen } = require("electron");
+      const cursor = electronScreen.getCursorScreenPoint();
+      const display = electronScreen.getDisplayNearestPoint(cursor);
+      const sf = display.scaleFactor || 1;
+      const b = display.bounds;
+
+      const panelWasVisible = !!(win && !win.isDestroyed() && win.isVisible());
+      if (panelWasVisible && win) {
+        win.hide();
+        await new Promise((r) => setTimeout(r, 80));
+      }
+
+      // Show shimmer capture overlay while we capture UIA
+      const overlayMod = await import("./guide/guide-overlay");
+      overlayMod.startCaptureShimmer();
+
+      // Read UIA context at the current cursor position
+      const { readContextAtPoint } = await import("./context-reader");
+      const ctx = await readContextAtPoint(cursor.x, cursor.y);
+
+      // Freeze the sheen band off so it doesn't appear in the screenshot
+      // (dim stays — content remains readable). Wait a beat for the renderer
+      // to paint the frozen state before GDI grabs the screen.
+      overlayMod.freezeCaptureShimmerForShot();
+      await new Promise((r) => setTimeout(r, 80));
+
+      // Always capture a full-screen screenshot with grid overlay
+      const x1 = Math.round(b.x * sf);
+      const y1 = Math.round(b.y * sf);
+      const x2 = Math.round((b.x + b.width) * sf);
+      const y2 = Math.round((b.y + b.height) * sf);
+      const imagePath = await captureAndOptimize(x1, y1, x2, y2, { noGrid: false });
+
+      if (!imagePath) {
+        log("CAPTURE_CONTEXT — screenshot capture returned null");
+        overlayMod.cancelCaptureShimmer();
+        sendStatus(false);
+        if (panelWasVisible && win && !win.isDestroyed()) win.show();
+        return;
+      }
+
+      // Build context payload, including the cursor position as metadata
+      const context: ContextPayload = {
+        element: ctx.element,
+        surrounding: ctx.surrounding,
+        cursorPos: cursor,
+        imagePath,
+        hasScreenshot: true,
+        source: "pointer",
+        windowInfo: ctx.windowInfo,
+        windowTree: ctx.windowTree,
+        visibleWindows: ctx.visibleWindows,
+      };
+
+      setContext(context);
+      setScreenshotMode("manual", {
+        physicalWidth: Math.round(b.width * sf),
+        physicalHeight: Math.round(b.height * sf),
+        scaleFactor: sf,
+      });
+      attachScreenshotNext = true;
+      log(`CAPTURE_CONTEXT — done: ${imagePath.slice(-40)}`);
+
+      sendStatus(true);
+
+      // Play the end wash, then re-show the panel. We intentionally do NOT
+      // send CONTEXT_READY here: that event carries fresh-activation semantics
+      // in the renderer (it resets streaming/currentResponse and may call
+      // restoreSession). Manual context capture is just a context refresh for
+      // the next message; the renderer learns about it via CONTEXT_CAPTURED.
+      overlayMod.finishCaptureShimmer(() => {
+        if (panelWasVisible && win && !win.isDestroyed()) {
+          win.show();
+          win.focus();
+          win.moveTop();
+        }
+      });
+    } catch (err: any) {
+      import("./guide/guide-overlay").then((m) => {
+        m.cancelCaptureShimmer();
+      });
+      log(`CAPTURE_CONTEXT FAILED: ${err.message}`);
+      sendStatus(false);
+      if (win && !win.isDestroyed() && !win.isVisible()) {
+        win.show();
+      }
+    }
+  });
+
+  ipcMain.on(IPC.RELEASE_CONTEXT, () => {
+    log("RELEASE_CONTEXT — clearing captured context + screenshot (keeping current chat session)");
+    if (currentContext?.imagePath) {
+      cleanupImage(currentContext.imagePath);
+    }
+    if (areaImagePath) {
+      cleanupImage(areaImagePath);
+      areaImagePath = "";
+    }
+    currentContext = null;
+    lastContext = null;
+    lastContextHash = "";
+    isAreaContext = false;
+    areaElements = [];
+    areaRect = null;
+    attachScreenshotNext = false;
+    screenshotMode = "none";
+    screenInfo = null;
+    // Keep the chat session alive: do NOT resetSession or flip
+    // hasSentFirstMessage. The next message continues the existing
+    // conversation as a follow-up (no context attached).
+    contextNeedsSending = false;
+    const win = getPanelWindow();
+    if (win && !win.isDestroyed()) {
+      win.webContents.send(IPC.CONTEXT_CAPTURED, { captured: false });
+    }
+  });
+
+  ipcMain.on(IPC.ATTACH_SCREENSHOT, async () => {
+    const win = getPanelWindow();
+    const sendStatus = (attached: boolean, hasImage: boolean) => {
+      if (win && !win.isDestroyed()) {
+        win.webContents.send(IPC.ATTACH_SCREENSHOT, { attached, hasImage });
+      }
+    };
+
+    // Area selections already captured the exact region the user drew, so
+    // re-capturing the whole screen would throw that away. Re-use it.
+    if (isAreaContext && areaImagePath) {
+      log(`ATTACH_SCREENSHOT — re-using area image ${areaImagePath.slice(-40)}`);
+      attachScreenshotNext = true;
+      sendStatus(true, true);
+      return;
+    }
+
+    // For pointer / no-context, always grab a FRESH full-screen capture
+    // with the panel hidden. Show overlay loading spinner while capturing.
+    log("ATTACH_SCREENSHOT — capturing full screen (fresh, panel hidden)");
+    try {
+      const { screen: electronScreen } = require("electron");
+      const cursor = electronScreen.getCursorScreenPoint();
+      const display = electronScreen.getDisplayNearestPoint(cursor);
+      const sf = display.scaleFactor || 1;
+      const b = display.bounds;
+      const x1 = Math.round(b.x * sf);
+      const y1 = Math.round(b.y * sf);
+      const x2 = Math.round((b.x + b.width) * sf);
+      const y2 = Math.round((b.y + b.height) * sf);
+
+      const panelWasVisible = !!(win && !win.isDestroyed() && win.isVisible());
+      if (panelWasVisible && win) {
+        win.hide();
+        await new Promise((r) => setTimeout(r, 80));
+      }
+
+      // No capture overlay here — the panel is already hidden and the
+      // overlay would wash out the grid lines in the screenshot.
+      const imagePath = await captureAndOptimize(x1, y1, x2, y2, { noGrid: false });
+
+      // Re-show panel
+      if (panelWasVisible && win && !win.isDestroyed()) {
+        win.show();
+      }
+
+      if (!imagePath) {
+        log("ATTACH_SCREENSHOT — capture returned null");
+        sendStatus(false, false);
+        return;
+      }
+
+      // Wire the captured image into the current context so the normal
+      // send path picks it up via `currentContext.imagePath`. If there's
+      // no context yet, create a minimal placeholder.
+      if (currentContext) {
+        if (currentContext.imagePath) cleanupImage(currentContext.imagePath);
+        currentContext.imagePath = imagePath;
+        currentContext.hasScreenshot = true;
+      } else {
+        currentContext = {
+          element: {
+            name: "User-attached screenshot",
+            type: "screenshot",
+            value: "",
+            bounds: { x: b.x, y: b.y, width: b.width, height: b.height },
+            children: [],
+          },
+          surrounding: [],
+          cursorPos: cursor,
+          imagePath,
+          hasScreenshot: true,
+        };
+        lastContext = currentContext;
+      }
+      attachScreenshotNext = true;
+      log(`ATTACH_SCREENSHOT — captured ${imagePath.slice(-40)}`);
+      sendStatus(true, true);
+    } catch (err: any) {
+      log(`ATTACH_SCREENSHOT FAILED: ${err.message}`);
+      sendStatus(false, false);
+    }
+  });
+
+  ipcMain.on(IPC.REMOVE_SCREENSHOT, () => {
+    log("REMOVE_SCREENSHOT — clearing attached image and resetting session");
+    // Delete the temp image file if it exists
+    if (currentContext?.imagePath) {
+      cleanupImage(currentContext.imagePath);
+      currentContext.imagePath = undefined;
+      currentContext.hasScreenshot = false;
+    }
+    if (areaImagePath) {
+      cleanupImage(areaImagePath);
+      areaImagePath = "";
+    }
+    attachScreenshotNext = false;
+    screenshotMode = "none";
+    screenInfo = null;
+    // Reset the session so the old image's context doesn't leak into the next send
+    client.resetSession();
+    contextNeedsSending = true;
+    hasSentFirstMessage = false;
+    const win = getPanelWindow();
+    if (win && !win.isDestroyed()) {
+      win.webContents.send(IPC.SESSION_RESET, { hasImage: false });
+    }
+  });
+
+  ipcMain.on(IPC.GUIDE_USER_CHOICE, async (_e, option: string) => {
+    const m = await import("./guide/guide-controller");
+    m.getController().handleUserChoice(option);
+  });
+
+  // Forward bubble button clicks from overlay to guide controller
+  ipcMain.on("guide-overlay-choice", async (_e, option: string) => {
+    log(`guide-overlay-choice received: "${option}"`);
+    const m = await import("./guide/guide-controller");
+    m.getController().handleUserChoice(option);
+  });
+
+  ipcMain.handle(IPC.RESTORE_SESSION, async (_e, sessionId?: string) => {
+    try {
+      const opencodeBin = findOpenCodeBin();
+      if (!opencodeBin) { log("restoreSession: bin not found"); return null; }
+      const cwd = config.workingDir || os.homedir();
+      const env = buildCleanOpenCodeEnv(process.env, config.apiKeys);
+      let targetSessionId: string;
+      if (sessionId) {
+        targetSessionId = sessionId;
+      } else {
+        const listRaw = await execOpenCode(opencodeBin, ["session", "list", "--format", "json", "-n", "1"], { encoding: "utf-8", timeout: 10000, cwd, env, maxBuffer: 1024*1024 });
+        const sessions = JSON.parse(extractJsonArray(listRaw));
+        if (!Array.isArray(sessions) || sessions.length === 0) { log("restoreSession: no sessions"); return null; }
+        // Filter to sessions created from MudrikNow's working directory. Without
+        // this we restore the most recent GLOBAL OpenCode session — which may
+        // belong to a CLI run in the user's home dir and leak unrelated
+        // conversation history into MudrikNow's chat.
+        const ourSessions = sessions
+          .filter((s: any) => s.directory === cwd)
+          .sort((a: any, b: any) => b.created - a.created);
+        if (ourSessions.length === 0) { log(`restoreSession: no sessions for directory ${cwd}`); return null; }
+        targetSessionId = ourSessions[0].id;
+      }
+      log(`restoreSession: target=${targetSessionId.slice(0, 30)}`);
+      const exportRaw = await execOpenCode(opencodeBin, ["export", targetSessionId], { encoding: "utf-8", timeout: 15000, cwd, env, maxBuffer: 5*1024*1024 });
+      const jsonStart = exportRaw.indexOf("{");
+      if (jsonStart < 0) { log("restoreSession: no json"); return null; }
+      const data = JSON.parse(exportRaw.slice(jsonStart));
+      if (!data.messages?.length) { log("restoreSession: empty"); return null; }
+      const history: { role: string; content: string }[] = [];
+      for (const msg of data.messages) {
+        if (!msg.parts) continue;
+        const texts: string[] = [];
+        for (const p of msg.parts) { if (p.type === "text" && p.text) texts.push(p.text); }
+        if (texts.length === 0) continue;
+        // OpenCode export format: msg.info.role. When missing, infer from
+        // content shape rather than blindly defaulting to "user" — that
+        // causes assistant responses to be parsed with the user regex,
+        // which fails and exposes raw model output.
+        let role = msg.info?.role;
+        const rawContent = texts.join("\n");
+        if (!role) {
+          role = rawContent.includes("--- USER MESSAGE ---") ? "user" : "assistant";
+        }
+        if (role === "system") continue; // never replay system prompts
+        let content = rawContent;
+        if (role === "user") {
+          // Tolerate CRLF from Windows-hosted OpenCode exports.
+          const msgMatch = content.match(/--- USER MESSAGE ---\r?\n([\s\S]*?)\r?\n--- END MESSAGE ---/);
+          if (msgMatch) {
+            content = msgMatch[1].trim();
+          } else {
+            // Fallback: if the content looks like a full prompt (contains
+            // the system/context wrapper), extract the last user message
+            // block — better than showing the entire prompt.
+            const lastUserIdx = content.lastIndexOf("--- USER MESSAGE ---");
+            const lastEndIdx = content.lastIndexOf("--- END MESSAGE ---");
+            if (lastUserIdx !== -1 && lastEndIdx !== -1 && lastEndIdx > lastUserIdx) {
+              content = content.slice(lastUserIdx + "--- USER MESSAGE ---".length, lastEndIdx).trim();
+              log(`restoreSession: regex missed but fallback extraction succeeded (${content.length} chars)`);
+            } else {
+              // Last resort: strip known prompt wrappers if present
+              const systemIdx = content.indexOf("--- SCREEN CONTEXT");
+              const settingIdx = content.indexOf("--- USER SETTING");
+              const msgIdx = content.indexOf("--- USER MESSAGE");
+              if (systemIdx !== -1 || settingIdx !== -1 || msgIdx !== -1) {
+                // Content contains prompt wrappers but no clear boundaries —
+                // strip everything before the last "--- USER MESSAGE ---" or
+                // after "--- END MESSAGE ---" if found.
+                const endMsgIdx = content.lastIndexOf("--- END MESSAGE ---");
+                if (endMsgIdx !== -1) {
+                  content = content.slice(0, endMsgIdx).trim();
+                  const lastUserMarker = content.lastIndexOf("--- USER MESSAGE ---");
+                  if (lastUserMarker !== -1) {
+                    content = content.slice(lastUserMarker + "--- USER MESSAGE ---".length).trim();
+                  }
+                }
+                log(`restoreSession: stripped prompt wrappers (${content.length} chars)`);
+              } else {
+                // Follow-up message without wrappers — extract just the user's
+                // choice text or click description instead of showing the entire
+                // prompt with candidates list and tool call artifacts.
+                const choiceMatch = content.match(/^User chose option:\s*"([^"]+)"/m);
+                if (choiceMatch) {
+                  // New format: just the quoted choice text
+                  content = `"${choiceMatch[1]}"`;
+                  log(`restoreSession: extracted choice text (${content.length} chars)`);
+                } else {
+                  const oldChoiceMatch = content.match(/^"([^"]+)"/m);
+                  if (oldChoiceMatch) {
+                    content = `"${oldChoiceMatch[1]}"`;
+                    log(`restoreSession: extracted choice text (${content.length} chars)`);
+                  } else {
+                    const clickMatch = content.match(/^User clicked at \((\d+),\s*(\d+)\)/m);
+                    if (clickMatch) {
+                      content = `Clicked at (${clickMatch[1]}, ${clickMatch[2]})`;
+                      log(`restoreSession: extracted click action (${content.length} chars)`);
+                    } else {
+                      // Truly raw user message — keep as-is
+                      log(`restoreSession: follow-up message without wrappers (${content.length} chars)`);
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } else {
+          content = cleanAssistantContent(content);
+        }
+        if (content.trim()) history.push({ role, content });
+      }
+      const trimmed = history.slice(-10);
+      const win = getPanelWindow();
+      if (win && trimmed.length > 0) win.webContents.send(IPC.SESSION_HISTORY, trimmed);
+      // Reset current session before restoring a different one
+      if (client.hasSession() && sessionId) {
+        client.resetSession();
+      }
+      client.setRestoredSession(targetSessionId);
+      log(`restoreSession: restored ${targetSessionId.slice(0, 30)}, ${trimmed.length}/${history.length} messages`);
+      return targetSessionId;
+    } catch (err: any) { log(`restoreSession error: ${err.message}`); return null; }
+  });
+
+  ipcMain.handle(IPC.GET_RECENT_CHATS, async () => {
+    // Return cached list if available (avoids repeated CLI calls)
+    if (recentChatsCache) {
+      log(`getRecentChats: returning ${recentChatsCache.length} cached sessions`);
+      return recentChatsCache;
+    }
+    try {
+      const opencodeBin = findOpenCodeBin();
+      if (!opencodeBin) { log("getRecentChats: bin not found"); return []; }
+      const cwd = config.workingDir || os.homedir();
+      const env = buildCleanOpenCodeEnv(process.env, config.apiKeys);
+      const listRaw = await execOpenCode(opencodeBin, ["session", "list", "--format", "json", "-n", "100"], { encoding: "utf-8", timeout: 10000, cwd, env, maxBuffer: 1024*1024 });
+      const sessions = JSON.parse(extractJsonArray(listRaw));
+      if (!Array.isArray(sessions) || sessions.length === 0) { log("getRecentChats: no sessions"); return []; }
+      const ourSessions = sessions
+        .filter((s: any) => s.directory === cwd)
+        .sort((a: any, b: any) => b.updated - a.updated)
+        .slice(0, 100);
+      if (ourSessions.length === 0) { log(`getRecentChats: no sessions for directory ${cwd}`); return []; }
+      const result = ourSessions.map((s: any) => ({
+        id: s.id,
+        // Keep the real title separate from the date so the UI can render
+        // both. Empty string when the session has no meaningful title yet
+        // (OpenCode defaults to "New session" until the first message).
+        title: ((s.title && !s.title.startsWith("New session")) ? s.title : "").slice(0, 60),
+        created: s.created,
+      }));
+      recentChatsCache = result;
+      log(`getRecentChats: fetched and cached ${result.length} sessions`);
+      return result;
+    } catch (err: any) { log(`getRecentChats error: ${err.message}`); return []; }
+  });
+
+  log("All IPC handlers registered");
+
+  // Spin up the guide controller singleton if Auto-Guide is already on at
+  // launch. Fire-and-forget — the dynamic imports resolve well before the
+  // user can trigger a guide session.
+  void initGuideControllerIfNeeded();
+
+  cleanupOldSessions();
+}
+
+const MAX_SESSIONS = 100;
+
+function cleanupOldSessions(): void {
+  const opencodeBin = findOpenCodeBin();
+  if (!opencodeBin) return;
+  const { execFile } = require("child_process");
+  const cwd = appConfig.workingDir || os.homedir();
+  const env = buildCleanOpenCodeEnv(process.env, appConfig.apiKeys);
+  const isNative = isNativeOpenCodeBin(opencodeBin);
+  const execCmd = isNative ? opencodeBin : "node";
+  const execArgs = isNative ? ["session", "list", "--format", "json", "-n", "100"] : [opencodeBin, "session", "list", "--format", "json", "-n", "100"];
+
+  execFile(execCmd, execArgs, { encoding: "utf-8", timeout: 15000, cwd, env, maxBuffer: 2*1024*1024 }, async (err: any, stdout: string) => {
+    if (err) { log(`cleanupSessions list error: ${err.message}`); return; }
+    try {
+      const sessions = JSON.parse(extractJsonArray(stdout));
+      if (!Array.isArray(sessions)) return;
+
+      const ourSessions = sessions
+        .filter((s: any) => s.directory === cwd)
+        .sort((a: any, b: any) => b.created - a.created);
+
+      if (ourSessions.length <= MAX_SESSIONS) {
+        log(`cleanupSessions: ${ourSessions.length} sessions in ${cwd}, nothing to delete`);
+        return;
+      }
+
+      const toDelete = ourSessions.slice(MAX_SESSIONS);
+      log(`cleanupSessions: deleting ${toDelete.length} old sessions (keeping ${MAX_SESSIONS})`);
+
+      for (const session of toDelete) {
+        const delCmd = isNative ? opencodeBin : "node";
+        const delArgs = isNative ? ["session", "delete", session.id] : [opencodeBin, "session", "delete", session.id];
+        const delProc = spawn(delCmd, delArgs, { cwd, env, stdio: "pipe" });
+        let delStderr = "";
+        delProc.stderr!.on("data", (d: Buffer) => { delStderr += d.toString(); });
+        delProc.on("close", (code) => {
+          if (code === 0) {
+            log(`cleanupSessions: deleted ${session.id.slice(0, 30)}`);
+          } else {
+            log(`cleanupSessions: failed to delete ${session.id.slice(0, 30)}: exit=${code} ${delStderr.slice(0, 100)}`);
+          }
+        });
+      }
+    } catch (parseErr: any) {
+      log(`cleanupSessions parse error: ${parseErr.message}`);
+    }
+  });
+}
+
+function filterToolArtifactLines(text: string): string {
+  let clean = text
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, "")
+    .replace(/<skill_content[\s\S]*?<\/skill_content>/gi, "")
+    .replace(/<skill[\s\S]*?<\/skill>/gi, "");
+  const lines = clean.split("\n");
+  const filtered = lines.filter(line => {
+    const trimmed = line.trim();
+    if (!trimmed) return true;
+    if (/^⚙\s/.test(trimmed)) return false;
+    if (/^(Thinking|Thought|Action|Observation)\s*:/i.test(trimmed)) return false;
+    if (/^playwright_|^browser_|^mcp__|^skill\b|^tool_/.test(trimmed)) return false;
+    if (/^\[[\w_]+\]/.test(trimmed) && /playwright|browser|tool|skill/i.test(trimmed)) return false;
+    if (/operational mode has changed/i.test(trimmed)) return false;
+    if (/no longer in read-only mode/i.test(trimmed)) return false;
+    if (/permitted to make file changes/i.test(trimmed)) return false;
+    if (/permitted to.*run shell commands/i.test(trimmed)) return false;
+    if (/permitted to.*utilize.*tools/i.test(trimmed)) return false;
+    // Filter out tool call descriptions from the model's internal monologue
+    if (/^Called the (Read|Write|Search|Run|Execute|List|Glob|Grep|Fetch) tool/i.test(trimmed)) return false;
+    if (/^\{["']?(filePath|command|query|url|pattern)/i.test(trimmed)) return false;
+    if (/^Image read successfully/i.test(trimmed)) return false;
+    if (/^User chose option:/i.test(trimmed)) return false;
+    if (/^Active window:/i.test(trimmed)) return false;
+    if (/^Element under cursor:/i.test(trimmed)) return false;
+    if (/^UIA CLICKABLE CANDIDATES/i.test(trimmed)) return false;
+    if (/^\[\d+\] ControlType\./i.test(trimmed)) return false;
+    return true;
+  });
+  return filtered.join("\n");
+}
+
+// Sanitizes assistant content for session-history replay to the renderer.
+// Strips prompt-injection noise (system-reminder / skill blocks) but PRESERVES
+// <!--ACTION:...--> markers — those are the model's action trail and belong
+// in the conversation. The renderer hides them visually in parseMessageContent
+// so they never render as raw text in the UI, but the original OpenCode
+// session (and our in-memory history) keeps them intact.
+function cleanAssistantContent(text: string): string {
+  return text
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, "")
+    .replace(/<skill_content[\s\S]*?<\/skill_content>/gi, "")
+    .replace(/<skill[\s\S]*?<\/skill>/gi, "")
+    .replace(/\[skill\][\s\S]*?\[\/skill\]/gi, "")
+    .trim();
+}
+
+/** Extracts the human-readable reply from an AI response that contained no
+ *  guide markers. Removes action markers, filters tool artifacts the same way
+ *  the streaming path does, and strips prompt-injection noise. */
+function extractGuideReplyText(text: string): string {
+  return cleanAssistantContent(filterToolArtifactLines(text.replace(/<!--ACTION:[\s\S]*?-->/g, ""))).trim();
+}
+
+/** opencode plugins (e.g. opencode-mobile) print `[plugin] …` banner lines to
+ *  stdout before the JSON, which breaks JSON.parse. This returns the substring
+ *  starting at the real JSON array `[` — the last `[` before the first `{`
+ *  (skips `[banner]` prefixes printed on the same line). No-op for clean output. */
+function extractJsonArray(raw: string): string {
+  const brace = raw.indexOf("{");
+  const start = brace >= 0 ? raw.lastIndexOf("[", brace) : raw.indexOf("[");
+  return start >= 0 ? raw.slice(start) : raw;
+}
+
+function execOpenCode(bin: string, cliArgs: string[], options: any): Promise<string> {
+  const { execFile } = require("child_process");
+  const isNative = isNativeOpenCodeBin(bin);
+  const cmd = isNative ? bin : "node";
+  const args = isNative ? cliArgs : [bin, ...cliArgs];
+  return new Promise<string>((res, rej) => {
+    execFile(cmd, args, options, (err: any, stdout: string) => err ? rej(err) : res(stdout));
+  });
+}
+
+/** Send a structured STREAM_ERROR so the renderer can render category-aware
+ *  recovery (auth → "Fix in Settings" banner; transient → retry button). */
+function emitStreamError(
+  win: BrowserWindow,
+  payload: { category: string; message: string; recoveryAction: string; provider?: string },
+): void {
+  win.webContents.send(IPC.STREAM_ERROR, payload);
+}
+
+function handleOpenCodeEvent(event: OpenCodeEvent, win: BrowserWindow): void {
+  switch (event.type) {
+    case "step_start":
+      log("step_start");
+      break;
+
+    case "text":
+      if (event.part?.text) {
+        const raw = event.part.text;
+        const filtered = filterToolArtifactLines(raw);
+        if (filtered) {
+          fullResponseText += filtered;
+          log(`text: "${filtered.slice(0, 60)}..."`);
+          win.webContents.send(IPC.STREAM_TOKEN, filtered);
+        } else {
+          log(`text filtered out (tool artifact): "${raw.slice(0, 60)}..."`);
+        }
+      }
+      break;
+
+    case "tool_use":
+      if (event.part) {
+        const toolName = event.part.tool || "unknown";
+        const status = event.part.state?.status || "unknown";
+        log(`tool_use: ${toolName} status=${status} (suppressed from display)`);
+        // Tell the renderer to wipe whatever text it has accumulated so
+        // far when the AI starts a REAL tool call. Pre-tool text is
+        // "thinking out loud" the model re-says after the tool result
+        // arrives. Without this, models that loop through several
+        // text→tool→text cycles dump a wall of duplicated preamble.
+        //
+        // EXCEPT when the "tool" is OpenCode's special "invalid" pseudo-
+        // tool — that's the bucket for tool calls that OpenCode rejected
+        // (e.g. model tried to call click_element as if it were a tool;
+        // OpenCode replies "unavailable tool, available: ..."). In that
+        // case the model often gives up and emits nothing more, so
+        // resetting the text would blank the chat. Keep the model's
+        // pre-error text visible so the user at least sees what it
+        // intended.
+        const isRealTool = toolName !== "invalid" && toolName !== "unknown";
+        if (isRealTool && (status === "running" || status === "completed")) {
+          win.webContents.send(IPC.STREAM_TEXT_RESET);
+        }
+      }
+      break;
+
+    case "step_finish":
+      log(`step_finish: reason=${event.part?.reason || "unknown"}`);
+      if (event.part?.reason === "stop") {
+        // Notify ONLY when the panel is not visible to the user — hidden to
+        // tray or minimized to taskbar. Never while visible. The toast
+        // replaces the old auto-show behaviour; clicking it restores the
+        // panel + scrolls to the response. notificationsEnabled is read
+        // live so a mid-session Settings toggle applies to the next one.
+        if ((!win.isVisible() || win.isMinimized()) && appConfig?.notificationsEnabled !== false) {
+          notifyResponseReady(win, fullResponseText, {
+            showPanel: () => { if (lastContext) showPanelFn?.(lastContext); },
+            scrollToLatest: () => { try { win.webContents.send(IPC.SCROLL_TO_LATEST); } catch { /* window gone */ } },
+          });
+        }
+      }
+      break;
+
+    case "error": {
+      // Provider errors arrive as { error: { name: "APIError", data: { message } } }
+      // — the text is at data.message, not error.message. extractErrorMessage
+      // handles both shapes. When there's genuinely no message, fall back to a
+      // chat-appropriate line instead of a verify-style "couldn't confirm".
+      const raw = extractErrorMessage(event.error);
+      const classified = classifyError(raw);
+      log(`OpenCode error (${classified.category}): ${raw || "(no message)"}`);
+      const provider = appConfig.model ? appConfig.model.split("/")[0] : undefined;
+      emitStreamError(win, {
+        category: classified.category,
+        message: raw ? classified.message : "The AI couldn't respond to this message. Please try again.",
+        recoveryAction: classified.recoveryAction,
+        provider,
+      });
+      break;
+    }
+
+    default:
+      log(`unhandled event type: ${event.type}`);
+  }
+}

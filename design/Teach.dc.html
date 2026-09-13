@@ -1,0 +1,132 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chivo:wght@300;400;500;600;700&family=Chivo+Mono:wght@400;500;600&family=Geist:wght@400;500;600&family=Silkscreen:wght@400;700&display=swap">
+  <style>
+    body { margin:0; font-family:"Chivo","Helvetica Neue",Arial,sans-serif; }
+    a { color:#000084; } a:hover { color:#840000; }
+    .lbl { font-family:"Chivo Mono",ui-monospace,monospace; font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:#7C796E; }
+    .mono { font-family:"Chivo Mono",ui-monospace,monospace; font-variant-numeric:tabular-nums; }
+    .px { font-family:"Silkscreen","Chivo Mono",monospace; }
+  </style>
+</helmet>
+
+<div style="width:1440px; height:900px; background:#F5F4EF; color:#14130F; overflow:hidden; position:relative; display:flex; flex-direction:column;">
+
+  <!-- ── the app, dimmed ──────────────────────────────────── -->
+  <div style="position:absolute; inset:0; opacity:.42; filter:saturate(.3); display:flex; flex-direction:column;">
+    <div style="height:44px; display:flex; align-items:center; border-bottom:1px solid #B5B5B5; background:#FCFBF8;">
+      <div style="display:flex; align-items:center; gap:9px; padding:0 16px; border-right:1px solid #D6D3C8; height:100%;">
+        <svg width="17" height="17" viewBox="0 0 512 512"><rect x="32" y="32" width="448" height="448" rx="110" fill="#1E6A48"/><g fill="none" stroke="#D68C42" stroke-width="44" stroke-linejoin="round"><path d="M164.5 124.5 V386.5"/><path d="M349.5 124.5 L164.5 256 L359.5 386.5"/></g><g fill="#D68C42"><circle cx="164.5" cy="124.5" r="38.5"/><circle cx="164.5" cy="386.5" r="38.5"/><circle cx="349.5" cy="124.5" r="38.5"/><circle cx="359.5" cy="386.5" r="38.5"/></g><g fill="#1E6A48"><circle cx="164.5" cy="124.5" r="17.5"/><circle cx="164.5" cy="386.5" r="17.5"/><circle cx="349.5" cy="124.5" r="17.5"/><circle cx="359.5" cy="386.5" r="17.5"/></g></svg>
+        <span style="font-weight:600; font-size:14px;">Kaleo</span>
+      </div>
+      <span style="font-size:12.5px; color:#484848; padding:0 12px;">stepper-driver-v2</span>
+    </div>
+    <div style="flex-grow:1; display:flex;">
+      <div style="width:252px; border-right:1px solid #D6D3C8; background:#FAF9F5; padding:12px 14px;">
+        <div class="lbl" style="margin-bottom:12px;">Parts</div>
+        <div style="display:flex; flex-direction:column; gap:11px;">
+          <div style="display:flex; gap:9px;"><span class="mono" style="font-size:11.5px; color:#840000;">U1</span><span style="font-size:12px;">STM32F030C8Tx</span></div>
+          <div style="display:flex; gap:9px;"><span class="mono" style="font-size:11.5px; color:#840000;">U2</span><span style="font-size:12px;">DRV8838</span></div>
+          <div style="display:flex; gap:9px;"><span class="mono" style="font-size:11.5px; color:#840000;">U3</span><span style="font-size:12px;">AMS1117-3.3</span></div>
+        </div>
+      </div>
+      <div style="flex-grow:1; background-image:radial-gradient(rgba(0,0,132,.09) 1px, transparent 1px); background-size:8px 8px;"></div>
+      <div style="width:308px; border-left:1px solid #D6D3C8; background:#FAF9F5;"></div>
+    </div>
+    <div style="height:28px; border-top:1px solid #B5B5B5; background:#EDEBE3;"></div>
+  </div>
+
+  <!-- ── the target, undimmed and highlighted ─────────────── -->
+  <div style="position:absolute; top:212px; left:1148px; z-index:20;">
+    <div style="background:#FAF9F5; border:2px solid #A855F7; border-radius:6px; box-shadow:0 0 0 4px rgba(168,85,247,.2), 0 6px 22px rgba(31,27,20,.18); padding:11px 14px; width:262px;">
+      <div class="lbl" style="color:#7C796E; margin-bottom:7px;">Net class</div>
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:7px 10px; background:#FCFBF8; border:1px solid #B5B5B5; border-radius:2px;">
+        <span class="mono" style="font-size:12px;">Default</span>
+        <svg width="11" height="7" viewBox="0 0 12 8" fill="none"><path d="M1 1.5 L6 6.5 L11 1.5" stroke="#7C796E" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── ghost cursor ─────────────────────────────────────── -->
+  <svg style="position:absolute; inset:0; z-index:30; pointer-events:none;" width="1440" height="900">
+    <!-- dotted route -->
+    <path d="M660 620 Q 830 500 1010 330 T 1268 262" stroke="#22C6D9" stroke-width="2" fill="none" stroke-dasharray="1 13" stroke-linecap="round" opacity=".75"/>
+    <!-- trail dots -->
+    <circle cx="900" cy="430" r="3" fill="#22C6D9" opacity=".2"/>
+    <circle cx="1020" cy="345" r="3" fill="#22C6D9" opacity=".38"/>
+    <circle cx="1140" cy="292" r="3" fill="#22C6D9" opacity=".56"/>
+
+    <!-- solder-joint landing dot -->
+    <circle cx="1268" cy="262" r="5" fill="#E8574A"/>
+    <circle cx="1268" cy="262" r="15" fill="none" stroke="#F5D547" stroke-width="2" opacity=".55"/>
+
+    <!-- the pointer -->
+    <g transform="translate(1262,256) rotate(-8)">
+      <path d="M0 0 L0 21 L5 16.5 L8.5 24 L12 22.2 L8.6 15 L15 14.6 Z" fill="#1F1B14" stroke="#FBF7EC" stroke-width="1.6" stroke-linejoin="round"/>
+    </g>
+    <!-- mini mascot riding behind -->
+    <g transform="translate(1238,232) rotate(-10)">
+      <circle cx="0" cy="0" r="13" fill="#F5D547" stroke="#1F1B14" stroke-width="1.6"/>
+      <path d="M-5 -5 L6 0 L-5 5 Z" stroke="#1F1B14" stroke-width="1.5" stroke-linejoin="round" fill="none"/>
+      <path d="M-9 -2.6 H-5 M-9 2.6 H-5 M6 0 H9.5" stroke="#1F1B14" stroke-width="1.5" stroke-linecap="round"/>
+    </g>
+  </svg>
+
+  <!-- ── caption pill ─────────────────────────────────────── -->
+  <div style="position:absolute; top:318px; left:1180px; z-index:31;">
+    <div style="background:#1F1B14; color:#FBF7EC; border-radius:999px; padding:7px 15px; display:flex; align-items:center; gap:9px; box-shadow:0 5px 16px rgba(31,27,20,.3);">
+      <span class="px" style="font-size:10px; letter-spacing:.03em;">click here</span>
+      <svg width="13" height="9" viewBox="0 0 14 10" fill="none"><path d="M1 5 H12 M8 1.5 L12 5 L8 8.5" stroke="#F5D547" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+  </div>
+
+  <!-- ── teaching panel, bottom-left ──────────────────────── -->
+  <div style="position:absolute; bottom:56px; left:40px; z-index:32; width:400px; background:#FFFFFF; border-radius:14px; border-bottom:2px solid #C9483C; box-shadow:0 16px 44px rgba(31,27,20,.28); padding-top:26px;">
+    <div style="position:absolute; top:-22px; left:20px; width:48px; height:48px; border-radius:50%; background:#F5D547; border:2px solid #1F1B14; display:flex; align-items:center; justify-content:center;">
+      <svg width="27" height="27" viewBox="0 0 28 28" fill="none">
+        <path d="M7 5 L22 14 L7 23 Z" stroke="#1F1B14" stroke-width="1.9" stroke-linejoin="round"/>
+        <path d="M2 9.5 H7 M2 18.5 H7 M22 14 H26.5" stroke="#1F1B14" stroke-width="1.9" stroke-linecap="round"/>
+        <path d="M10 10.5 L13 13 M10 16 L13 13.5" stroke="#1F1B14" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+    </div>
+
+    <div style="padding:4px 18px 10px 78px; display:flex; align-items:center; gap:9px;">
+      <span class="px" style="font-size:11px; color:#57503F;">showing you</span>
+      <div style="flex-grow:1;"></div>
+      <span class="mono" style="font-size:10.5px; color:#8B8370;">2 / 4</span>
+    </div>
+
+    <div style="height:1px; background:#E0D6BF;"></div>
+
+    <div style="padding:15px 18px;">
+      <div style="font-family:Geist,sans-serif; font-size:14px; font-weight:600; margin-bottom:7px; color:#1F1B14;">Give the motor supply its own net class</div>
+      <div style="font-family:Geist,sans-serif; font-size:13px; color:#57503F; line-height:1.55; margin-bottom:14px;">The DRV8838 pulls 1.8&#8202;A peak. On the Default class those traces would be 0.25&#8202;mm and run about 40&#8202;&deg;C hot. Open the net-class dropdown and I'll add a <span class="mono" style="font-size:12px; color:#1F1B14;">POWER</span> class at 0.8&#8202;mm.</div>
+
+      <div style="display:flex; align-items:center; gap:5px;">
+        <span style="height:3px; flex-grow:1; background:#E8574A; border-radius:2px;"></span>
+        <span style="height:3px; flex-grow:1; background:#E8574A; border-radius:2px;"></span>
+        <span style="height:3px; flex-grow:1; background:#E8E0CD; border-radius:2px;"></span>
+        <span style="height:3px; flex-grow:1; background:#E8E0CD; border-radius:2px;"></span>
+      </div>
+    </div>
+
+    <div style="height:1px; background:#E0D6BF;"></div>
+
+    <div style="padding:11px 18px; display:flex; align-items:center; gap:9px;">
+      <button style="font-family:Geist,sans-serif; font-size:12.5px; font-weight:500; padding:7px 14px; background:#E8574A; color:#fff; border:none; border-bottom:2px solid #C9483C; border-radius:6px; cursor:pointer;">Do it for me</button>
+      <button style="font-family:Geist,sans-serif; font-size:12.5px; padding:7px 14px; background:transparent; color:#57503F; border:1px solid #E0D6BF; border-radius:6px; cursor:pointer;">I&rsquo;ll try</button>
+      <div style="flex-grow:1;"></div>
+      <span style="font-family:Geist,sans-serif; font-size:12px; color:#8B8370; cursor:pointer;">Skip</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

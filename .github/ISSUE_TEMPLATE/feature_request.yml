@@ -1,0 +1,30 @@
+name: Feature request
+description: Propose something Silkscreen should do
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Open feature work is tracked in `TODO.txt` — check there first. It may already be
+        planned, or deliberately archived with the reasoning recorded.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What board, or what workflow, is hard today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like it to do
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Anything it must not break
+      description: |
+        Silkscreen has load-bearing invariants — integer nanometres end to end, one
+        coordinate flip in kicad.py, an engine that makes no network calls, and a test
+        suite that runs with no API key. Say if your proposal touches any of them.

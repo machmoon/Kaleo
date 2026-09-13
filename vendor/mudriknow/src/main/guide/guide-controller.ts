@@ -1,0 +1,642 @@
+// src/main/guide/guide-controller.ts
+//
+// State machine that drives Auto-Guide mode. Owns the active guide session
+// across IDLE -> OFFER -> STEP_ACTIVE -> WAITING -> RECAPTURING -> AWAITING_AI.
+// Coordinates the overlay (Task 4.2), the mouse hook (Task 4.1), the
+// chat-input options bar (renderer IPC), and OpenCode follow-up prompts.
+//
+// Spec reference: Mudrik-Plan/docs/specs/2026-05-03-auto-guide-design.md §4.2
+
+import {
+  Action,
+  GuideOfferPayload,
+  GuideStepPayload,
+  GuideCompletePayload,
+  GuideAbortPayload,
+} from "../../shared/types";
+import { screen } from "electron";
+import { log } from "../logger";
+
+/** System-injected options that always appear in guide mode regardless of what
+ *  the AI sends. The runtime injects localized versions based on the user's
+ *  language setting — the AI is instructed NOT to include these. */
+const SYSTEM_OPTION_KEYS = ["cancel", "somethingElse"] as const;
+
+function boundsHintToPhysical(bounds: { x: number; y: number; width: number; height: number }): { x: number; y: number; width: number; height: number } {
+  // The AI's boundsHint is in logical (DIP) pixels because the candidates
+  // list we send is converted to logical. showOverlay expects physical
+  // screen pixels, so we multiply by the display scale factor.
+  const display = screen.getDisplayNearestPoint({ x: bounds.x, y: bounds.y });
+  const sf = display?.scaleFactor || screen.getPrimaryDisplay().scaleFactor || 1;
+  return {
+    x: Math.round(bounds.x * sf),
+    y: Math.round(bounds.y * sf),
+    width: Math.round(bounds.width * sf),
+    height: Math.round(bounds.height * sf),
+  };
+}
+
+export type GuidePhase =
+  | "idle"
+  | "offer"
+  | "step-active"
+  | "waiting"
+  | "recapturing"
+  | "awaiting-ai";
+
+export interface GuideStateUpdate {
+  phase: GuidePhase;
+  caption?: string;
+  options?: string[];
+  /** Index of the Cancel option in `options` — the renderer uses this to
+   *  apply the cancel styling instead of text-matching "Cancel" (which
+   *  breaks when the AI localizes the option text). */
+  cancelIndex?: number;
+  stepIndex?: number;
+  estStepsLeft?: number;
+  /** For phase==="offer": the summary describing what the guide will do. */
+  summary?: string;
+  /** For phase==="idle" sent right after a guide_complete or guide_abort:
+   *  short message to flash in the chat (recap or reason). */
+  finalMessage?: string;
+  /** Localized label for the "Else" button. NOT included in `options` —
+   *  the panel dock ignores this (the user can type directly in the chat
+   *  input there). The overlay mirror appends it to the bubble buttons so
+   *  the user can open the panel for free-text input mid-step. */
+  elseOptionText?: string;
+}
+
+export interface ClickEvent {
+  x: number;
+  y: number;
+  button: "left" | "right" | "middle";
+}
+
+export interface GuideControllerDeps {
+  overlay: {
+    show: (
+      target: { x: number; y: number; width: number; height: number },
+      fromCursor: { x: number; y: number },
+    ) => Promise<void>;
+    hide: () => void;
+    setOwlMode?: (mode: "pointing" | "thinking") => void;
+    /** Hide just the speech bubble (owl stays visible). Used by the
+     *  "Else" button: user wants to type in the panel, so the bubble
+     *  buttons go away but the owl keeps pointing at the target. */
+    hideBubble?: () => void;
+  };
+  getActiveHwnd: () => Promise<number>;
+  getCursorPos: () => { x: number; y: number };
+  /** Sends a follow-up to OpenCode and streams. Takes the action descriptor
+   *  directly; the implementation handles hiding the panel, capturing
+   *  screenshot + UIA tree of the TARGET app (not MudrikNow), formatting the
+   *  prompt with fresh candidates, and showing the panel. The controller
+   *  doesn't wait on the AI — the next guide_* marker arrives via
+   *  handleAction(). Replaces the previous buildFollowUpPrompt+sendFollowUp
+   *  pair so screenshot and UIA capture happen in ONE hide-show window
+   *  with MudrikNow out of the foreground (otherwise UIA reads MudrikNow's own
+   *  tree, not the app the user is being guided through). */
+  sendFollowUp: (
+    actionDesc:
+      | { kind: "click"; x: number; y: number }
+      | { kind: "option"; choice: string },
+  ) => Promise<void>;
+  /** Pushes a state update to the renderer's chat-input options bar. */
+  onStateUpdate: (s: GuideStateUpdate) => void;
+  /** Hide/show panel window */
+  hidePanel: () => void;
+  showPanel: () => void;
+  /** Show panel and focus the chat input (used by "Something else" option) */
+  showPanelAndFocusInput: () => void;
+  /** Resolves the AI's target to pixel bounds via UIA lookup.
+   *  The new dual-bounds system means the AI provides either:
+   *  - uiaBounds: copied from UIA tree (pixel-perfect, high confidence)
+   *  - guessBounds: estimated from screenshot (for Chromium/web apps)
+   *  This function is a FINAL fallback when the AI didn't provide either.
+   *  Returns null if UIA can't find the element — the controller then
+   *  shows NO owl (better no guide than wrong guide). */
+  resolveTargetBounds?: (
+    target: {
+      selector: string;
+      automationId?: string;
+      uiaBounds?: { x: number; y: number; width: number; height: number };
+      guessBounds?: { x: number; y: number; width: number; height: number };
+    },
+  ) => Promise<{ x: number; y: number; width: number; height: number } | null>;
+  /** Localized "Guide cancelled" string for the idle final message. */
+  getCancelledMessage?: () => string;
+  /** Returns localized labels for the two system-injected options
+   *  (cancel + somethingElse) based on the user's language setting.
+   *  The AI is instructed NOT to include these — the runtime injects
+   *  them so they're always correct regardless of AI localization. */
+  getOptionLabels?: () => { cancel: string; somethingElse: string };
+}
+
+const STEP_INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; // 5 min
+
+export class GuideController {
+  private phase: GuidePhase = "idle";
+  private pendingAction:
+    | { kind: "click"; x: number; y: number }
+    | { kind: "option"; choice: string }
+    | null = null;
+  private currentStep: GuideStepPayload | null = null;
+  private deferredFirstStep: GuideStepPayload | null = null;
+  private inactivityTimer: NodeJS.Timeout | null = null;
+  private processing: boolean = false;
+  private runGeneration: number = 0;
+  /** The actual text of the Cancel option in the current state's options
+   *  array. May be localized (e.g. "إلغاء") when the AI translates it.
+   *  handleUserChoice matches against this instead of hardcoding "Cancel". */
+  private cancelOptionText: string | null = null;
+  /** Localized "Else" label — only appended to the OVERLAY bubble's option
+   *  list (not the panel dock). When the user taps it, we hide the bubble
+   *  and show the panel with the chat input focused so they can type a
+   *  custom follow-up instead of picking a predefined option. */
+  private elseOptionText: string | null = null;
+
+  constructor(private deps: GuideControllerDeps) {}
+
+  /** Current phase (for tests + the Esc binding's guide-aware case). */
+  getPhase(): GuidePhase {
+    return this.phase;
+  }
+
+  /** Entry point called by action-executor when a guide_* marker arrives. */
+  async handleAction(action: Action): Promise<void> {
+    switch (action.type) {
+      case "guide_offer":
+        await this.handleOffer(action as unknown as GuideOfferPayload);
+        return;
+      case "guide_step":
+        // If we're still in the offer phase, the AI emitted the first step
+        // in the same response as the offer. Hold it locally so we can
+        // execute it instantly when the user accepts.
+        if (this.phase === "offer") {
+          this.deferredFirstStep = action as unknown as GuideStepPayload;
+          log("guide_step: deferred first step stored while in offer phase");
+          return;
+        }
+        await this.handleStep(action as unknown as GuideStepPayload);
+        return;
+      case "guide_complete":
+        this.handleComplete(action as unknown as GuideCompletePayload);
+        return;
+      case "guide_abort":
+        this.handleAbort(action as unknown as GuideAbortPayload);
+        return;
+      default:
+        // Should never happen — validateAction filters; defensive log
+        return;
+    }
+  }
+
+  /** Returns the localized Cancel label.
+   *  Falls back to English if the dep isn't wired. */
+  private getCancelLabel(): string {
+    return this.deps.getOptionLabels?.().cancel ?? "Cancel";
+  }
+
+  /** Returns the localized "Else" label for the overlay-only button. */
+  private getElseLabel(): string {
+    return this.deps.getOptionLabels?.().somethingElse ?? "Something else";
+  }
+
+  /** Renderer reports the user tapped a button in the chat-input options bar,
+   *  or typed a custom message in the chat input during a guide step. */
+  async handleUserChoice(option: string): Promise<void> {
+    // Match cancel by stored text (may be localized) OR the literal "Cancel"
+    // (sent by the Escape key handler which doesn't know the localized text).
+    if (option === "Cancel" || (this.cancelOptionText !== null && option === this.cancelOptionText)) {
+      await this.cancel();
+      return;
+    }
+    if (this.phase === "offer") {
+      // User accepted the offer → hide panel and execute the first step
+      // immediately if the AI already provided it, otherwise fall back to
+      // the old capture+AI round-trip.
+      this.deps.hidePanel();
+      const cursor = this.deps.getCursorPos();
+      // Show thinking owl briefly so the overlay window appears; if we have a
+      // deferred first step we'll switch to pointing instantly.
+      await this.deps.overlay.show(
+        { x: cursor.x - 32, y: cursor.y - 32, width: 64, height: 64 },
+        cursor,
+      );
+      this.deps.overlay.setOwlMode?.("thinking");
+      this.deps.onStateUpdate({ phase: "awaiting-ai", caption: "Thinking...", options: [] });
+      this.transitionToAwaitingAI();
+
+      const deferred = this.deferredFirstStep;
+      if (deferred) {
+        log(`guide offer accepted: executing deferred first step ${deferred.stepIndex}`);
+        this.deferredFirstStep = null;
+        await this.handleStep(deferred);
+        return;
+      }
+
+      log("guide offer accepted: no deferred first step, falling back to AI follow-up");
+      await this.deps.sendFollowUp({ kind: "option", choice: option });
+      return;
+    }
+    if (this.phase === "step-active") {
+      // "Else" button: user wants to type a custom follow-up instead of
+      // picking a predefined option. Hide the bubble (owl stays pointing)
+      // and show the panel with the chat input focused. The panel dock
+      // renders the AI options + Cancel (minus Else) so the user can
+      // still tap a button if they change their mind. No advance — the
+      // guide stays in step-active until the user types or picks.
+      if (this.elseOptionText !== null && option === this.elseOptionText) {
+        this.deps.overlay.hideBubble?.();
+        this.deps.showPanelAndFocusInput();
+        return;
+      }
+      // closeOptions short-circuit: AI marked this option as terminal (e.g.
+      // "Done — task complete" on the final step). Close locally without
+      // burning another round-trip on a confirmation the user already gave.
+      const step = this.currentStep;
+      if (step?.closeOptions && step.closeOptions.includes(option)) {
+        this.handleComplete({ type: "guide_complete", summary: option });
+        return;
+      }
+      // Otherwise the user is signalling progress mid-walkthrough — either
+      // by tapping an option button or by typing custom text in the chat
+      // input. Hide the panel (it may be visible via the Else path or a
+      // panel-dock click), record and advance; the next guide_* marker
+      // arrives via handleAction(). The overlay's onStateUpdate for the
+      // "waiting" phase switches the owl to thinking automatically.
+      this.deps.hidePanel();
+      this.recordPendingAction({ kind: "option", choice: option });
+      void this.advanceFromStep();
+      return;
+    }
+    // Other phases shouldn't receive choice events; ignore defensively
+  }
+
+  /** User cancelled (Esc, Cancel button, or a hard timeout) — close locally
+   *  without an AI round-trip. The session continuation isn't worth a token
+   *  spend on "ack — guide cancelled" the user already initiated. The AI
+   *  will see the cancellation context on the user's next message.
+   *
+   *  Bumps runGeneration so any in-flight advanceFromStep aborts at its
+   *  next await point — without this, a screen-click that started the
+   *  pipeline a moment before Cancel would still complete its sleep,
+   *  recapture, screenshot, and follow-up to the AI. */
+  async cancel(): Promise<void> {
+    if (this.phase === "idle") return;
+    this.runGeneration += 1;
+    this.deps.overlay.hide();
+    this.clearInactivityTimer();
+    this.processing = false;
+    this.pendingAction = null;
+    this.deferredFirstStep = null;
+    this.cancelOptionText = null;
+    this.elseOptionText = null;
+    const wasActive = this.phase !== "offer";
+    this.phase = "idle";
+    this.currentStep = null;
+    const cancelledMessage = this.deps.getCancelledMessage?.() ?? "Guide cancelled.";
+    this.deps.onStateUpdate({
+      phase: "idle",
+      finalMessage: cancelledMessage,
+    });
+    if (wasActive) {
+      this.deps.showPanel();
+    }
+  }
+
+  /** End the guide gracefully with the AI's actual reply text. Used when the
+   *  AI responded to a follow-up without emitting guide markers — we show the
+   *  real reply instead of injecting a misleading "Guide cancelled" message. */
+  endWithReply(replyText: string): void {
+    if (this.phase === "idle") return;
+    this.runGeneration += 1;
+    this.deps.overlay.hide();
+    this.clearInactivityTimer();
+    this.processing = false;
+    this.pendingAction = null;
+    this.deferredFirstStep = null;
+    this.cancelOptionText = null;
+    this.elseOptionText = null;
+    const wasActive = this.phase !== "offer";
+    this.phase = "idle";
+    this.currentStep = null;
+    this.deps.onStateUpdate({
+      phase: "idle",
+      finalMessage: replyText,
+    });
+    if (wasActive) {
+      this.deps.showPanel();
+    }
+  }
+
+  /** Update the caption shown while waiting for the AI. Used to surface a
+   *  transient failure without killing the guide, so the user can retry. */
+  setAwaitingAICaption(caption: string): void {
+    if (this.phase !== "awaiting-ai") return;
+    this.deps.onStateUpdate({ phase: "awaiting-ai", caption, options: [] });
+  }
+
+  // ---------- private state-machine methods ----------
+
+  private async handleOffer(p: GuideOfferPayload): Promise<void> {
+    // The decision to use guide mode is the AI's per GUIDE_PROMPT_FULL —
+    // the runtime does NOT gate on step count or task type. Only schema
+    // sanity is enforced here (must be a finite number; the renderer would
+    // otherwise show "Step 1 · ~NaN left" or similar). Clamp non-positive
+    // integers to 1 for the counter so they don't mislead the user, but
+    // don't reject the offer.
+    const estSteps =
+      typeof p.estSteps === "number" && Number.isFinite(p.estSteps)
+        ? Math.max(1, Math.round(p.estSteps))
+        : 1;
+    if (this.phase !== "idle" && this.phase !== "awaiting-ai") {
+      // A guide_offer arriving mid-step is unexpected; treat as abort of current
+      await this.cancel();
+    }
+    this.phase = "offer";
+    this.deferredFirstStep = null;
+    // The AI is instructed NOT to include Cancel — the runtime injects a
+    // localized version based on the user's language. "Something else" is
+    // NOT injected: the user can type custom text directly in the chat
+    // input during any guide step, so a dedicated button is redundant.
+    const cancelLabel = this.getCancelLabel();
+    const aiOptions = p.options;
+    const mergedOptions = [...aiOptions, cancelLabel];
+    const cancelIdx = aiOptions.length;
+    this.cancelOptionText = cancelLabel;
+    this.deps.onStateUpdate({
+      phase: "offer",
+      summary: p.summary,
+      options: mergedOptions,
+      cancelIndex: cancelIdx,
+      estStepsLeft: estSteps,
+    });
+  }
+
+  private async handleStep(p: GuideStepPayload): Promise<void> {
+    if (this.phase !== "offer" && this.phase !== "awaiting-ai") {
+      // Out-of-band guide_step (no prior offer). Throw so the dispatcher's
+      // ActionResult shows success=false — otherwise the renderer's
+      // "guide_step OK" badge lies about what just happened. The throw is
+      // caught in action-executor.ts's guide branch and surfaced to the
+      // user as a clear failure they can act on (typically: ask the AI to
+      // emit a guide_offer first).
+      throw new Error("guide_step rejected — no active offer. Ask the AI to start the guide with guide_offer first.");
+    }
+    this.phase = "step-active";
+    this.currentStep = p;
+    this.pendingAction = null;
+    this.processing = false;
+
+    // Inject localized Cancel. The AI is instructed NOT to include it.
+    // "Else" is also injected — but only on the OVERLAY bubble (the panel
+    // dock doesn't need it since the user can type directly in the chat
+    // input). The overlay mirror in ipc-handlers appends it to showBubble.
+    const cancelLabel = this.getCancelLabel();
+    const elseLabel = this.getElseLabel();
+    const aiOptions = p.options;
+    const mergedOptions = [...aiOptions, cancelLabel];
+    const cancelIdx = aiOptions.length;
+    this.cancelOptionText = cancelLabel;
+    this.elseOptionText = elseLabel;
+
+    // Push the step UI to the renderer
+    this.deps.onStateUpdate({
+      phase: "step-active",
+      caption: p.caption,
+      options: mergedOptions,
+      cancelIndex: cancelIdx,
+      stepIndex: p.stepIndex,
+      estStepsLeft: p.estStepsLeft,
+      elseOptionText: elseLabel,
+    });
+
+    // Show the overlay (only if we have a target — typing-only steps may have target=null)
+    if (p.target) {
+      const cursor = this.deps.getCursorPos();
+      // Dual-bounds priority:
+      // 1. uiaBounds: AI copied from UIA tree (pixel-perfect, PHYSICAL pixels)
+      // 2. guessBounds: AI estimated from screenshot (Chromium/web fallback, PHYSICAL)
+      // 3. boundsHint (legacy): might be logical or physical — try direct first
+      // 4. resolveTargetBounds: UIA live lookup as last resort
+      // 5. null: no owl shown (better no guide than wrong guide)
+      let bounds: { x: number; y: number; width: number; height: number } | null = null;
+
+      if (p.target.uiaBounds) {
+        bounds = p.target.uiaBounds;
+        log(`guide_step: using uiaBounds from AI for "${p.target.selector}" @(${bounds.x},${bounds.y})`);
+      } else if (p.target.guessBounds) {
+        bounds = p.target.guessBounds;
+        log(`guide_step: using guessBounds from AI for "${p.target.selector}" @(${bounds.x},${bounds.y})`);
+      } else if (p.target.boundsHint) {
+        // Legacy fallback: boundsHint might be logical (from old prompts) or physical.
+        // The candidate list in the guide follow-up now shows physical pixels,
+        // so modern sessions should use uiaBounds. This path handles old sessions.
+        bounds = p.target.boundsHint;
+        log(`guide_step: using legacy boundsHint for "${p.target.selector}" @(${bounds.x},${bounds.y})`);
+      } else if (this.deps.resolveTargetBounds) {
+        try {
+          bounds = await this.deps.resolveTargetBounds({
+            selector: p.target.selector,
+            automationId: p.target.automationId,
+          });
+          if (bounds) {
+            log(`guide_step: resolved "${p.target.selector}" via UIA live lookup @(${bounds.x},${bounds.y})`);
+          }
+        } catch {
+          // best-effort
+        }
+      }
+
+      if (bounds) {
+        // All coordinate paths now deliver PHYSICAL screen pixels. The overlay
+        // window consumes physical pixels directly (the renderer positions
+        // elements in CSS pixels that map 1:1 to physical via the conversion
+        // in showOverlay).
+        await this.deps.overlay.show(bounds, cursor);
+      } else {
+        log(`guide_step: no bounds for "${p.target.selector}" — showing owl at cursor instead`);
+        // Show owl at cursor position so user still has the bubble UI
+        await this.deps.overlay.show(
+          { x: cursor.x - 32, y: cursor.y - 32, width: 64, height: 64 },
+          cursor,
+        );
+      }
+      this.deps.overlay.setOwlMode?.("pointing");
+    } else {
+      // No target → show owl at cursor with caption bubble
+      const cursor = this.deps.getCursorPos();
+      await this.deps.overlay.show(
+        { x: cursor.x - 32, y: cursor.y - 32, width: 64, height: 64 },
+        cursor,
+      );
+    }
+
+    // Mouse-hook click detection is intentionally OFF for this phase. The
+    // global WH_MOUSE_LL hook caused two recurring bugs in real testing:
+    // (1) screen-clicks racing with the user's option-button click (Cancel
+    // got swallowed by the in-flight pipeline); (2) clicks on the panel's
+    // own buttons sometimes reaching the hook because scopeHwnd was set
+    // to the panel after a previous option click. Right now the user
+    // confirms every step exclusively via the chat-input options bar
+    // (e.g. "I did it", "Settings opened", "Nothing happened"). This is
+    // simpler and matches the user's mental model — the owl points at
+    // the target, the user clicks in their app, then taps the option to
+    // advance. The mouseHook dep / mouse-hook.ts module are kept for a
+    // future re-enable.
+    // if (p.trackable) {
+    //   this.currentScopeHwnd = await this.deps.getActiveHwnd();
+    //   await this.deps.mouseHook.start({
+    //     scopeHwnd: this.currentScopeHwnd,
+    //     onClick: (e) => this.onMouseClick(e),
+    //   });
+    // }
+
+    // Arm the inactivity timeout
+    this.armInactivityTimer();
+  }
+
+  private handleComplete(p: GuideCompletePayload): void {
+    if (this.phase === "idle") {
+      throw new Error("guide_complete rejected — no active guide. The AI should emit guide_offer to begin a new walkthrough.");
+    }
+    this.clearInactivityTimer();
+    this.phase = "idle";
+    this.currentStep = null;
+    this.deferredFirstStep = null;
+    this.pendingAction = null;
+    this.processing = false;
+    this.cancelOptionText = null;
+    this.elseOptionText = null;
+    this.deps.onStateUpdate({ phase: "idle", finalMessage: p.summary });
+    // Show thinking owl "Done!" for 3 seconds, then hide owl and show panel
+    this.deps.overlay.setOwlMode?.("thinking");
+    setTimeout(() => {
+      this.deps.overlay.hide();
+      this.deps.showPanel();
+    }, 3000);
+  }
+
+  private handleAbort(p: GuideAbortPayload): void {
+    this.deps.overlay.hide();
+    this.clearInactivityTimer();
+    this.phase = "idle";
+    this.currentStep = null;
+    this.deferredFirstStep = null;
+    this.pendingAction = null;
+    this.processing = false;
+    this.cancelOptionText = null;
+    this.elseOptionText = null;
+    this.deps.onStateUpdate({ phase: "idle", finalMessage: p.reason });
+    // Show panel when guide aborts
+    this.deps.showPanel();
+  }
+
+  private recordPendingAction(
+    a: { kind: "click"; x: number; y: number } | { kind: "option"; choice: string },
+  ): void {
+    this.pendingAction = a;
+  }
+
+  private async advanceFromStep(): Promise<void> {
+    if (this.processing) return;
+    if (!this.currentStep) return;
+    if (!this.pendingAction) return;
+    const myGen = ++this.runGeneration;
+    const isCurrent = () => this.runGeneration === myGen && this.phase !== "idle";
+    this.processing = true;
+    this.clearInactivityTimer();
+
+    const waitMs = this.currentStep.waitMs;
+    const action = this.pendingAction;
+    this.pendingAction = null;
+
+    // Get cursor position to keep owl visible
+    const cursor = this.deps.getCursorPos();
+
+    // WAITING phase — show thinking owl at cursor with "Waiting..." bubble
+    this.phase = "waiting";
+    await this.deps.overlay.show(
+      { x: cursor.x - 32, y: cursor.y - 32, width: 64, height: 64 },
+      cursor,
+    );
+    this.deps.overlay.setOwlMode?.("thinking");
+    this.deps.onStateUpdate({ phase: "waiting", caption: "Waiting...", options: [] });
+    await sleep(waitMs);
+    if (!isCurrent()) {
+      this.processing = false;
+      return;
+    }
+
+    // RECAPTURING phase
+    this.phase = "recapturing";
+    this.deps.onStateUpdate({ phase: "recapturing", caption: "Capturing...", options: [] });
+
+    // AWAITING_AI phase — send follow-up (capture + format + dispatch)
+    this.phase = "awaiting-ai";
+    this.deps.onStateUpdate({ phase: "awaiting-ai", caption: "Thinking...", options: [] });
+    try {
+      await this.deps.sendFollowUp(action);
+      if (!isCurrent()) {
+        this.processing = false;
+        return;
+      }
+    } catch (err) {
+      if (!isCurrent()) {
+        // Cancel raced with the in-flight follow-up — swallow the error
+        this.processing = false;
+        return;
+      }
+      this.handleAbort({
+        type: "guide_abort",
+        reason: `Follow-up failed: ${(err as Error).message ?? "unknown error"}`,
+      });
+    }
+    this.processing = false;
+    // Next guide_step / guide_complete / guide_abort arrives via handleAction()
+  }
+
+  private transitionToAwaitingAI(): void {
+    this.phase = "awaiting-ai";
+    this.deps.onStateUpdate({ phase: "awaiting-ai" });
+  }
+
+  private armInactivityTimer(): void {
+    this.clearInactivityTimer();
+    this.inactivityTimer = setTimeout(() => {
+      this.handleAbort({
+        type: "guide_abort",
+        reason: "Guide paused due to inactivity.",
+      });
+    }, STEP_INACTIVITY_TIMEOUT_MS);
+  }
+
+  private clearInactivityTimer(): void {
+    if (this.inactivityTimer) {
+      clearTimeout(this.inactivityTimer);
+      this.inactivityTimer = null;
+    }
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// Singleton accessor — used by Task 6.1's lazy-import wiring.
+let singleton: GuideController | null = null;
+export function getController(deps?: GuideControllerDeps): GuideController {
+  if (!singleton) {
+    if (!deps) throw new Error("getController: first call must provide deps");
+    singleton = new GuideController(deps);
+  }
+  return singleton;
+}
+export function isControllerInitialized(): boolean {
+  return singleton !== null;
+}
+// Test helper — resets the singleton between tests
+export function _resetSingletonForTests(): void {
+  singleton = null;
+}

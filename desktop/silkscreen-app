@@ -1,0 +1,27 @@
+#!/bin/sh
+# Launch silkscreen as a desktop app.
+#
+# A shell shim rather than a python shebang because the interpreter matters:
+# the engine needs ortools and kiutils, which live in the repo's .venv and
+# almost never in the system python. A `#!/usr/bin/env python3` script would
+# start, import service.app, and die on ModuleNotFoundError -- a failure that
+# reads as "the app is broken" rather than "wrong interpreter".
+#
+# Windows has no shebang; run `.venv\Scripts\python desktop\launcher.py` there.
+set -eu
+
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+root=$(dirname -- "$here")
+
+if [ -n "${SILKSCREEN_PYTHON:-}" ]; then
+    python=$SILKSCREEN_PYTHON
+elif [ -x "$root/.venv/bin/python" ]; then
+    python=$root/.venv/bin/python
+else
+    python=$(command -v python3 || command -v python) || {
+        echo "silkscreen-app: no python found" >&2
+        exit 127
+    }
+fi
+
+exec "$python" "$here/launcher.py" "$@"

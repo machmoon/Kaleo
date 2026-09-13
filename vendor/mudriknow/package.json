@@ -1,0 +1,58 @@
+{
+  "name": "mudriknow",
+  "version": "3.3.0",
+  "description": "MudrikNow — a Windows tray AI assistant that perceives the UI element under your cursor and acts on it via UI Automation.",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "webpack",
+    "start": "npm run build && electron .",
+    "dev": "webpack --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check:no-env": "node scripts/check-no-env.js",
+    "postinstall": "node scripts/prune-platform-bins.js",
+    "pack:dir": "npm run build && electron-builder --win --dir",
+    "dist": "npm run build && npm run check:no-env && electron-builder --win",
+    "release": "npm run build && npm run check:no-env && electron-builder --win --publish always"
+  },
+  "keywords": [
+    "electron",
+    "windows",
+    "ai-assistant",
+    "uiautomation",
+    "opencode",
+    "mudriknow"
+  ],
+  "author": "MudrikNow contributors",
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource/ibm-plex-sans-arabic": "^5.3.0",
+    "@opencode-ai/sdk": "^1.4.6",
+    "electron-updater": "^6.8.3",
+    "koffi": "^2.16.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "rehype-highlight": "^7.0.2",
+    "remark-gfm": "^4.0.1",
+    "robotjs": "^0.7.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitest/ui": "^4.1.5",
+    "copy-webpack-plugin": "^14.0.0",
+    "css-loader": "^7.1.4",
+    "electron": "^35.7.5",
+    "electron-builder": "^26.8.1",
+    "html-webpack-plugin": "^5.6.6",
+    "style-loader": "^4.0.0",
+    "ts-loader": "^9.5.7",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.5",
+    "webpack": "^5.106.0",
+    "webpack-cli": "^7.0.2"
+  }
+}

@@ -1,0 +1,25 @@
+# Deliberately narrow. There is NO global `* text=auto` rule here: the only
+# CRLF file in the tracked tree is retired mcp/search_symbols.py, and a global
+# rule would renormalise it (and anything else a teammate is mid-edit on) into
+# a diff nobody asked for. Add rules here one file type at a time, with a
+# reason.
+
+# Board files are checked in as text, not binary. `text eol=lf` normalises them
+# to LF in the repo and on checkout on every platform; `-text` would be the
+# other obvious choice and is WRONG here, because git would then render every
+# board change as "binary files differ". Reviewing a placement change means
+# diffing the s-expressions -- seeing which (at x y rot) moved and by how much
+# -- and that is the whole reason the board file is the API. The one tracked
+# board, engine/tests/fixtures/ref.kicad_pcb, is already pure LF, so this rule
+# pins the status quo rather than rewriting anything.
+*.kicad_pcb text eol=lf
+*.kicad_sch text eol=lf
+
+# Shell scripts must be LF whatever machine committed them: a CRLF shebang line
+# makes the kernel look for an interpreter named "/bin/sh\r" and the script
+# dies with a bare "not found" that names no cause. The team pushes from mixed
+# Windows/macOS machines and CI runs these on Linux.
+*.sh text eol=lf
+
+# Vendored reference code is read-only (see CLAUDE.md): never normalise it.
+vendor/** -text

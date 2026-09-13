@@ -1,0 +1,74 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 5 0 R 7 0 R] /Count 3 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 9 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 130 >>
+stream
+BT
+/F1 10 Tf
+50 750 Td
+(SILK1117 voltage regulator datasheet. General description. Output) Tj
+0 -14 Td
+(current 1A maximum.) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 9 0 R >> >> /Contents 6 0 R >>
+endobj
+6 0 obj
+<< /Length 194 >>
+stream
+BT
+/F1 10 Tf
+50 750 Td
+(Pin definitions. Pin 1 GND ground. Pin 2 VOUT output. Pin 3 VIN) Tj
+0 -14 Td
+(input supply. VIN requires 100nF decoupling capacitor close to) Tj
+0 -14 Td
+(the pin.) Tj
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 9 0 R >> >> /Contents 8 0 R >>
+endobj
+8 0 obj
+<< /Length 156 >>
+stream
+BT
+/F1 10 Tf
+50 750 Td
+(Application notes. Place a 22uF tantalum capacitor on VOUT for) Tj
+0 -14 Td
+(stability. Dropout voltage is 1.3V at full load.) Tj
+ET
+endstream
+endobj
+9 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 10
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000127 00000 n 
+0000000253 00000 n 
+0000000434 00000 n 
+0000000560 00000 n 
+0000000805 00000 n 
+0000000931 00000 n 
+0000001138 00000 n 
+trailer
+<< /Size 10 /Root 1 0 R >>
+startxref
+1208
+%%EOF

@@ -1,0 +1,466 @@
+{
+  "model": "gemini-3.5-flash-lite",
+  "plan": false,
+  "summary": {
+    "trials": 3,
+    "validated": 3,
+    "scored_on_function": 3,
+    "correct": 0,
+    "unscored": 0,
+    "mean_rounds": 1,
+    "first_round_clean": 3,
+    "dropped_transport_failures": 0,
+    "instruction_conflicts": 0,
+    "named_the_part": 3,
+    "reached_a_verdict": 3
+  },
+  "trials": [
+    {
+      "case": "blinker10",
+      "trial": 1,
+      "validated": true,
+      "rounds": 1,
+      "validation_errors": [],
+      "structural_problems": [],
+      "instruction_conflicts": [],
+      "simulated": true,
+      "refusal": null,
+      "clauses": [
+        {
+          "name": "oscillates no slower than 5 Hz",
+          "passed": true,
+          "measured": 58.70245299860876,
+          "expected": 5.0,
+          "op": ">=",
+          "unit": "Hz",
+          "margin": 53.70245299860876,
+          "error": null
+        },
+        {
+          "name": "oscillates no faster than 20 Hz",
+          "passed": false,
+          "measured": 58.70245299860876,
+          "expected": 20.0,
+          "op": "<=",
+          "unit": "Hz",
+          "margin": -38.70245299860876,
+          "error": null
+        },
+        {
+          "name": "output actually swings most of the supply",
+          "passed": true,
+          "measured": 3.199999999895799,
+          "expected": 2.5,
+          "op": ">=",
+          "unit": "V",
+          "margin": 0.6999999998957991,
+          "error": null
+        }
+      ],
+      "correct": false,
+      "circuit": {
+        "devices": {
+          "NE555D": {
+            "pins": {
+              "GND": "1",
+              "TRIG": "2",
+              "OUT": "3",
+              "RESET": "4",
+              "CTRL": "5",
+              "THRES": "6",
+              "DISCH": "7",
+              "VCC": "8"
+            }
+          },
+          "battery_input": {
+            "kind": "connector",
+            "package": "JST_PH_2P",
+            "pins": {
+              "1": "1",
+              "2": "2"
+            }
+          },
+          "led_connector": {
+            "kind": "connector",
+            "package": "PinHeader_1x02_P2.54mm",
+            "pins": {
+              "1": "1",
+              "2": "2"
+            }
+          }
+        },
+        "passives": {
+          "c_dec_vcc": {
+            "type": "capacitor",
+            "value": "100nF"
+          },
+          "c_ctrl": {
+            "type": "capacitor",
+            "value": "10nF"
+          },
+          "c_timing": {
+            "type": "capacitor",
+            "value": "100nF"
+          },
+          "r_astable_1": {
+            "type": "resistor",
+            "value": "47kOhm"
+          },
+          "r_astable_2": {
+            "type": "resistor",
+            "value": "100kOhm"
+          },
+          "r_led": {
+            "type": "resistor",
+            "value": "330Ohm"
+          },
+          "c_bulk": {
+            "type": "capacitor",
+            "value": "10uF"
+          }
+        },
+        "nets": {
+          "GND": [
+            "NE555D.GND",
+            "battery_input.2",
+            "c_dec_vcc.2",
+            "c_ctrl.2",
+            "c_timing.2",
+            "led_connector.2",
+            "c_bulk.2"
+          ],
+          "+5V": [
+            "NE555D.VCC",
+            "NE555D.RESET",
+            "battery_input.1",
+            "c_dec_vcc.1",
+            "r_astable_1.1",
+            "c_bulk.1"
+          ],
+          "TRIG_THRES": [
+            "NE555D.TRIG",
+            "NE555D.THRES",
+            "c_timing.1",
+            "r_astable_2.2"
+          ],
+          "DISCH": [
+            "NE555D.DISCH",
+            "r_astable_1.2",
+            "r_astable_2.1"
+          ],
+          "CTRL": [
+            "NE555D.CTRL",
+            "c_ctrl.1"
+          ],
+          "OUT": [
+            "NE555D.OUT",
+            "r_led.1"
+          ],
+          "LED_DRIVE": [
+            "r_led.2",
+            "led_connector.1"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 2.93,
+      "model_error": null
+    },
+    {
+      "case": "blinker10",
+      "trial": 2,
+      "validated": true,
+      "rounds": 1,
+      "validation_errors": [],
+      "structural_problems": [],
+      "instruction_conflicts": [],
+      "simulated": true,
+      "refusal": null,
+      "clauses": [
+        {
+          "name": "oscillates no slower than 5 Hz",
+          "passed": true,
+          "measured": 78.78738520612335,
+          "expected": 5.0,
+          "op": ">=",
+          "unit": "Hz",
+          "margin": 73.78738520612335,
+          "error": null
+        },
+        {
+          "name": "oscillates no faster than 20 Hz",
+          "passed": false,
+          "measured": 78.78738520612335,
+          "expected": 20.0,
+          "op": "<=",
+          "unit": "Hz",
+          "margin": -58.787385206123346,
+          "error": null
+        },
+        {
+          "name": "output actually swings most of the supply",
+          "passed": true,
+          "measured": 3.199999999895799,
+          "expected": 2.5,
+          "op": ">=",
+          "unit": "V",
+          "margin": 0.6999999998957991,
+          "error": null
+        }
+      ],
+      "correct": false,
+      "circuit": {
+        "devices": {
+          "NE555D": {
+            "pins": {
+              "GND": "1",
+              "TRIG": "2",
+              "OUT": "3",
+              "RESET": "4",
+              "CTRL": "5",
+              "THRES": "6",
+              "DISCH": "7",
+              "VCC": "8"
+            }
+          },
+          "battery_input": {
+            "kind": "connector",
+            "package": "JST_PH_2P",
+            "pins": {
+              "1": "1",
+              "2": "2"
+            }
+          },
+          "led_connector": {
+            "kind": "connector",
+            "package": "PinHeader_1x02_P2.54mm",
+            "pins": {
+              "1": "1",
+              "2": "2"
+            }
+          }
+        },
+        "passives": {
+          "c_dec_vcc": {
+            "type": "capacitor",
+            "value": "100nF"
+          },
+          "c_ctrl": {
+            "type": "capacitor",
+            "value": "10nF"
+          },
+          "c_timing": {
+            "type": "capacitor",
+            "value": "100nF"
+          },
+          "r_astable_1": {
+            "type": "resistor",
+            "value": "47kOhm"
+          },
+          "r_astable_2": {
+            "type": "resistor",
+            "value": "68kOhm"
+          },
+          "r_led": {
+            "type": "resistor",
+            "value": "330Ohm"
+          }
+        },
+        "nets": {
+          "+5V": [
+            "battery_input.1",
+            "NE555D.VCC",
+            "NE555D.RESET",
+            "c_dec_vcc.1",
+            "r_astable_1.1"
+          ],
+          "GND": [
+            "battery_input.2",
+            "NE555D.GND",
+            "c_dec_vcc.2",
+            "c_ctrl.2",
+            "c_timing.2",
+            "led_connector.2"
+          ],
+          "TRIG_THRES": [
+            "NE555D.TRIG",
+            "NE555D.THRES",
+            "c_timing.1",
+            "r_astable_2.1"
+          ],
+          "DISCH_NODE": [
+            "NE555D.DISCH",
+            "r_astable_1.2",
+            "r_astable_2.2"
+          ],
+          "CTRL_NODE": [
+            "NE555D.CTRL",
+            "c_ctrl.1"
+          ],
+          "OUT_NODE": [
+            "NE555D.OUT",
+            "r_led.1"
+          ],
+          "LED_DRIVE": [
+            "r_led.2",
+            "led_connector.1"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 28.82,
+      "model_error": null
+    },
+    {
+      "case": "blinker10",
+      "trial": 3,
+      "validated": true,
+      "rounds": 1,
+      "validation_errors": [],
+      "structural_problems": [],
+      "instruction_conflicts": [],
+      "simulated": true,
+      "refusal": null,
+      "clauses": [
+        {
+          "name": "oscillates no slower than 5 Hz",
+          "passed": true,
+          "measured": 58.70245299860876,
+          "expected": 5.0,
+          "op": ">=",
+          "unit": "Hz",
+          "margin": 53.70245299860876,
+          "error": null
+        },
+        {
+          "name": "oscillates no faster than 20 Hz",
+          "passed": false,
+          "measured": 58.70245299860876,
+          "expected": 20.0,
+          "op": "<=",
+          "unit": "Hz",
+          "margin": -38.70245299860876,
+          "error": null
+        },
+        {
+          "name": "output actually swings most of the supply",
+          "passed": true,
+          "measured": 3.199999999895799,
+          "expected": 2.5,
+          "op": ">=",
+          "unit": "V",
+          "margin": 0.6999999998957991,
+          "error": null
+        }
+      ],
+      "correct": false,
+      "circuit": {
+        "devices": {
+          "NE555D": {
+            "pins": {
+              "GND": "1",
+              "TRIG": "2",
+              "OUT": "3",
+              "RESET": "4",
+              "CTRL": "5",
+              "THRES": "6",
+              "DISCH": "7",
+              "VCC": "8"
+            }
+          },
+          "bat_input": {
+            "kind": "connector",
+            "package": "JST_PH_2P",
+            "pins": {
+              "1": "1",
+              "2": "2"
+            }
+          },
+          "led_conn": {
+            "kind": "connector",
+            "package": "PinHeader_1x02_P2.54mm",
+            "pins": {
+              "1": "1",
+              "2": "2"
+            }
+          }
+        },
+        "passives": {
+          "c_dec_vcc": {
+            "type": "capacitor",
+            "value": "100nF"
+          },
+          "c_bulk": {
+            "type": "capacitor",
+            "value": "10uF"
+          },
+          "c_ctrl": {
+            "type": "capacitor",
+            "value": "10nF"
+          },
+          "c_timing": {
+            "type": "capacitor",
+            "value": "100nF"
+          },
+          "r_ra": {
+            "type": "resistor",
+            "value": "47kOhm"
+          },
+          "r_rb": {
+            "type": "resistor",
+            "value": "100kOhm"
+          },
+          "r_led": {
+            "type": "resistor",
+            "value": "330Ohm"
+          }
+        },
+        "nets": {
+          "GND": [
+            "NE555D.GND",
+            "bat_input.2",
+            "c_dec_vcc.2",
+            "c_bulk.2",
+            "c_ctrl.2",
+            "c_timing.2",
+            "led_conn.2"
+          ],
+          "+5V": [
+            "NE555D.VCC",
+            "NE555D.RESET",
+            "bat_input.1",
+            "c_dec_vcc.1",
+            "c_bulk.1",
+            "r_ra.1"
+          ],
+          "CTRL": [
+            "NE555D.CTRL",
+            "c_ctrl.1"
+          ],
+          "TRIGGER_THRESHOLD": [
+            "NE555D.TRIG",
+            "NE555D.THRES",
+            "c_timing.1",
+            "r_rb.2"
+          ],
+          "DISCHARGE": [
+            "NE555D.DISCH",
+            "r_ra.2",
+            "r_rb.1"
+          ],
+          "OUT": [
+            "NE555D.OUT",
+            "r_led.1"
+          ],
+          "LED_DRIVE": [
+            "r_led.2",
+            "led_conn.1"
+          ]
+        }
+      },
+      "raw": null,
+      "seconds": 2.65,
+      "model_error": null
+    }
+  ]
+}

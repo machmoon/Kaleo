@@ -1,0 +1,366 @@
+/* ---------------------------------------------------------------------------
+   Kaleo overlay motion vocabulary
+   ===============================
+
+   A small, closed set of named classes for the overlay bar. The point of a
+   vocabulary rather than per-component `transition-*` utilities is that this
+   file is the only place a duration lives: an implementer picks a class, not a
+   number, and the register stays coherent across the pill, the bar and every
+   block that lands during a run.
+
+   THE THREE RULES THIS FILE OBEYS
+   ------------------------------
+
+   1. Only `opacity` and `transform` are ever animated. The overlay Card is a
+      `backdrop-filter` surface compositing over live KiCad pixels
+      (`global.css` — `[data-slot="card"]`, `[data-slot="popover-content"]`),
+      which makes it the most expensive thing on screen. Opacity and transform
+      are the two properties the compositor can run without re-rasterising the
+      blur. Nothing here touches `filter`, `box-shadow`, `background`, `width`,
+      or `top/left`. The one exception is `height`, and only under the cmdk
+      mechanism at the bottom of this file, which never crosses the native
+      window boundary.
+
+   2. Nothing here animates the native window. The Tauri panel is sized from a
+      state table on the Rust side; every class below lives strictly inside the
+      webview and is invisible to `ResizeObserver`. Transforms do not change an
+      ancestor's border box, its `scrollWidth` or its `scrollHeight`, which is
+      exactly what `useOverlayHeight`'s `apply()` measures — so applying any of
+      these classes cannot provoke a resize, and a resize cannot interrupt them.
+
+   3. Whole-pixel travel only. On retina, a transform that lands on a half
+      pixel shimmers against a blurred backdrop as the compositor resamples it.
+      Every offset below is an integer number of CSS pixels (4px or 2px, both
+      integral at 1x and 2x), and there is deliberately **no `scale()` in this
+      vocabulary** — a scale interpolates every edge of the element through
+      fractional positions for the whole of its duration, which is the shimmer
+      case, and on a 132 px pill it buys almost nothing a translate does not.
+
+   WHY THESE DURATIONS
+   -------------------
+
+   The reference register is Flow Launcher's (160 / 360 / 560 ms with a
+   circular ease on opacity and small offsets). We sit at or below its short
+   tier throughout, because an overlay that takes 400 ms to appear reads as
+   slow rather than expensive — 360 and 560 are Flow's *window* fades, and
+   everything here is a block inside an already-visible card, travelling 4 px.
+   Shorter travel wants a shorter clock.
+
+     --kv-dur-swap   90ms  Two elements trading one slot. The overlap *is* the
+                           whole cost of a crossfade, so it is bounded by the
+                           ~100 ms below which a change is not perceived as a
+                           wait at all. Above that the outgoing element reads
+                           as a ghost of the incoming one.
+     --kv-dur-enter 150ms  A block arriving in the card. Just under Flow's
+                           160 ms short tier: same register, one notch shorter
+                           because the element is already inside a visible
+                           surface rather than being the surface.
+     --kv-dur-exit  110ms  ~0.7x the enter. An exit carries no information the
+                           reader needs to absorb, so it should not cost the
+                           same as an entrance; this asymmetry is the standard
+                           one (Material's "exits are faster than entrances").
+     --kv-dur-size  100ms  cmdk's own number, kept verbatim — see the list
+                           section at the bottom.
+     --kv-stagger    28ms  Per-row delay for a settling group, capped at five
+                           steps (140 ms of lead-in, i.e. never more than one
+                           extra enter's worth however many rows land). Below
+                           ~20 ms a stagger is invisible; above ~40 ms a
+                           seven-row feed becomes a countdown.
+
+   EASING
+
+     --kv-ease-opacity  easeOutCirc. Flow uses a circular ease on opacity, and
+                        it is the right shape: most of the alpha travel happens
+                        early, so the element is legible well before it stops
+                        changing.
+     --kv-ease-move     easeOutExpo, for the transform half. A hard decelerate
+                        makes a 4 px offset read as arrival rather than drift.
+
+   REDUCED MOTION
+
+   `prefers-reduced-motion: reduce` **disables** this vocabulary rather than
+   shortening it (see the block at the end). This is a floating always-on-top
+   window over someone else's work — precisely the case the media query exists
+   for. Elements still appear and disappear; they simply do it in one frame,
+   which is the behaviour the overlay has today. A `data-motion="still"`
+   attribute on any ancestor does the same thing manually, matching the seam
+   `VoiceOrb` already uses (`VoiceOrb.tsx` — `data-motion="still|animated"`),
+   so a test or a component with its own reason can opt out without a media
+   query.
+   --------------------------------------------------------------------------- */
+
+:root {
+  --kv-dur-swap: 90ms;
+  --kv-dur-enter: 900ms;
+  --kv-dur-exit: 110ms;
+  --kv-dur-size: 100ms;
+  --kv-stagger: 28ms;
+  /* easeOutCirc */
+  --kv-ease-opacity: cubic-bezier(0, 0.55, 0.45, 1);
+  /* easeInCirc — the exact mirror of --kv-ease-opacity, and the only correct
+     partner for it in a cross-dissolve. See §2. */
+  --kv-ease-opacity-out: cubic-bezier(0.55, 0, 1, 0.45);
+  /* easeOutExpo */
+  --kv-ease-move: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ---------------------------------------------------------------------------
+   1. Swap — two elements trading one slot
+
+   Opacity only. A crossfade is the one case where a transform is actively
+   wrong: the two elements are laid out in the same place, so any offset makes
+   them cross *through* each other. Use for the pill's chevron <-> listening
+   status, and for anything else that is a substitution rather than an arrival.
+
+   These are keyframe animations, not transitions, because the element is
+   mounting: a transition needs a painted "before" frame that a freshly
+   inserted node does not have. React remounting the branch replays them, which
+   is the behaviour you want.
+   --------------------------------------------------------------------------- */
+
+@keyframes kv-swap-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes kv-swap-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.kv-swap-in {
+  animation: kv-swap-in var(--kv-dur-swap) var(--kv-ease-opacity) both;
+}
+
+/* Only usable where the implementer keeps the outgoing node mounted for the
+   duration (a presence wrapper, or a `setTimeout` before the unmount). React's
+   plain ternary drops the old subtree in the same commit, so applying this to
+   a `? :` branch does nothing — which is honest: there is no exit phase to
+   animate, and pretending otherwise would just add a class that never runs. */
+.kv-swap-out {
+  animation: kv-swap-out var(--kv-dur-exit) var(--kv-ease-opacity) both;
+}
+
+/* ---------------------------------------------------------------------------
+   2. Shape change — the pill <-> bar substitution
+
+   The pill and the full bar are both 58 px tall and both centred in the
+   window, so the only geometry that changes between them is *width*, and the
+   window is re-centred in the same native call that resizes it
+   (`overlay-dock.ts` — `dockOriginFor`, applied by `useOverlaySize`). The two
+   shapes therefore occupy the same slot, centred on the same point, and by
+   §1's rule that makes this a **substitution**: a cross-dissolve with no
+   offset at all.
+
+   This is a deliberate reversal. `.kv-shape-in` used to carry a
+   `translateX(-4px)` lead-in, justified as "the content follows the frame"
+   because `set_size` was anchored at the window's top-left and a collapse
+   slid the bar 234 px left before the dock caught up (audit §2.4). That
+   anchoring is gone — size and origin now travel in one `set_window_frame`
+   — so the 4 px was answering a problem that no longer exists, and a 600 px
+   card drifting sideways while a 132 px one fades under it reads as a second,
+   smaller move on top of the swap rather than as arrival.
+
+   THE OUTGOING EASE IS ARITHMETIC, NOT TASTE
+
+   Both shapes are `[data-slot="card"]`, which `global.css` paints with an
+   `!important` background — an *opaque* surface over a transparent window
+   sitting on live KiCad pixels. They are concentric and differently wide, so
+   at any instant the composite alpha is `a` where only the outgoing card
+   covers, `b` where only the incoming does, and `a + b - ab` where both do.
+
+   Only one direction is ever a cross-dissolve: collapsing, where the arriving
+   pill is strictly inside the departing bar (`useShapeGhost` — "ghost the
+   shrink, never the grow"). Every pixel the bar had and the pill does not is
+   therefore covered by the outgoing card *alone*, and its alpha is the whole
+   of the surface there. `.kv-swap-out`'s easeOutCirc is a fast fall — most of
+   the alpha travel happens early, which is right for a substitution whose two
+   halves sit in the same footprint and wrong here: it puts that area at 0.34
+   thirty milliseconds in, i.e. two thirds of the bar's width goes two thirds
+   transparent and the engineer's board shows through it while the pill is
+   still arriving. That flash is the roughness; the 4 px slide was papering
+   over it.
+
+   `--kv-ease-opacity-out` is `--kv-ease-opacity` reflected — easeInCirc, a
+   slow fall — so the departing surface holds (0.87 at the midpoint, 0.60 at
+   four fifths) and releases at the end, while the pill rises fast underneath
+   it and reaches the eye immediately. Both halves run for `--kv-dur-enter`,
+   one clock: the "exits are faster than entrances" asymmetry in §1 belongs to
+   an exit that leaves a gap behind it, and a dissolve whose halves have
+   different clocks is not a dissolve.
+
+   Apply `.kv-shape-in` to the root of whichever shape is mounting and
+   `.kv-shape-out` to the outgoing surface, where one is held (see
+   `useShapeGhost` in `pages/kaleo/index.tsx`, whose `SHAPE_EXIT_MS` is this
+   duration). The held surface goes *under* the arriving shape, not over it —
+   the wrappers are `relative` so source order decides — because the new
+   content is what the reader is waiting for, and a blank card painted over it
+   for 150 ms is the thing a swap is supposed to avoid. Neither class goes on
+   the node whose height is measured: they are opacity-only now, so they could
+   not perturb a measurement even by accident.
+
+   WHAT THIS CLASS CANNOT DO, AND WHERE THAT IS HANDLED
+
+   A cross-dissolve is only smooth if the incoming shape is laid out at its
+   *final* width in the frame it first paints. The bar is `w-full`, i.e.
+   `100vw`, and the webview is exactly as wide as the native window — so a bar
+   mounted before the window has grown lays out at the pill's ~132 px, paints
+   squashed, and reflows to 600 px when the resize lands a frame or two later.
+   No easing curve can hide a reflow. That is fixed in JS, not here, by
+   holding the swap until the viewport is wide enough
+   (`hasRoomFor`/`useShownShape`, same file).
+   --------------------------------------------------------------------------- */
+
+@keyframes kv-shape-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.kv-shape-in {
+  animation: kv-swap-in var(--kv-dur-enter) var(--kv-ease-opacity) both;
+}
+
+.kv-shape-out {
+  animation: kv-shape-out var(--kv-dur-enter) var(--kv-ease-opacity-out) both;
+}
+
+/* ---------------------------------------------------------------------------
+   3. Settle — a block arriving in the card during a run
+
+   The card is a vertical stack (`flex flex-col gap-2`), so a block that lands
+   in it arrives from below: 4 px up into place with the opacity behind it.
+   This is the treatment for the activity-feed rows, the result card, the
+   failure block, the step panel — anything that appears mid-run rather than
+   substituting for something already on screen.
+
+   `.kv-settle` is the single-block form. `.kv-settle-group` on a container
+   makes its direct children settle in sequence, so a feed that gains three
+   rows in one frame reads as three rows rather than one lurch. The stagger is
+   pure CSS (`nth-child`), capped at five steps so the group's total lead-in
+   never exceeds 140 ms however long the list grows — a sixth row and beyond
+   simply share the last delay.
+   --------------------------------------------------------------------------- */
+
+/* Transform only; `kv-swap-in` carries the alpha, as in §2. */
+@keyframes kv-settle {
+  from {
+    transform: translateY(4px);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+.kv-settle {
+  animation:
+    kv-settle var(--kv-dur-enter) var(--kv-ease-move) both,
+    kv-swap-in var(--kv-dur-enter) var(--kv-ease-opacity) both;
+}
+
+.kv-settle-group > * {
+  animation:
+    kv-settle var(--kv-dur-enter) var(--kv-ease-move) both,
+    kv-swap-in var(--kv-dur-enter) var(--kv-ease-opacity) both;
+  animation-delay: calc(4 * var(--kv-stagger));
+}
+.kv-settle-group > :nth-child(1) {
+  animation-delay: 0ms;
+}
+.kv-settle-group > :nth-child(2) {
+  animation-delay: var(--kv-stagger);
+}
+.kv-settle-group > :nth-child(3) {
+  animation-delay: calc(2 * var(--kv-stagger));
+}
+.kv-settle-group > :nth-child(4) {
+  animation-delay: calc(3 * var(--kv-stagger));
+}
+
+/* ---------------------------------------------------------------------------
+   4. List height — the cmdk mechanism
+
+   Adapted from cmdk (https://github.com/pacocoursey/cmdk), MIT licensed, which
+   is compatible with this repository's GPL-3.0. cmdk's `Command.List` puts a
+   `ResizeObserver` on an inner sizer element and writes the observed height to
+   a `--cmdk-list-height` custom property on the list; the list's CSS then
+   consumes that property with `transition: height 100ms ease`. We keep both the
+   mechanism and the 100 ms.
+
+   Why it is safe here, and the reason this is the *only* height animation in
+   the file: the animated height belongs to a DOM node whose parent is already
+   large enough, or is itself scroll-clamped. It never propagates to the node
+   `useOverlayHeight` observes, so it never becomes a native window resize, and
+   the "DOM animating 58->260 while the native window jumps 58->260 in one
+   frame" fight described in the audit (§3.2) cannot happen.
+
+   Usage:
+
+       <div className="kv-list" style={{ "--kv-list-height": `${h}px` }}>
+         <div ref={sizerRef}>...rows...</div>
+       </div>
+
+   with `h` written from a `ResizeObserver` on the sizer. If the property is
+   unset the list is simply `auto` and behaves exactly as it does today, so the
+   class is safe to apply before the observer is wired.
+   --------------------------------------------------------------------------- */
+
+.kv-list {
+  height: var(--kv-list-height, auto);
+  overflow: hidden;
+  transition: height var(--kv-dur-size) ease;
+}
+
+/* ---------------------------------------------------------------------------
+   5. Opting out
+
+   Two ways, both of which must fully disable the motion rather than shorten
+   it. `!important` is load-bearing: these rules have to beat the shorthand
+   `animation` declarations above regardless of source order or specificity,
+   and there is nothing legitimate for them to be overriding.
+   --------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .kv-swap-in,
+  .kv-swap-out,
+  .kv-shape-in,
+  .kv-shape-out,
+  .kv-settle,
+  .kv-settle-group > * {
+    animation: none !important;
+  }
+  .kv-list {
+    transition: none !important;
+  }
+}
+
+[data-motion="still"] .kv-swap-in,
+[data-motion="still"] .kv-swap-out,
+[data-motion="still"] .kv-shape-in,
+[data-motion="still"] .kv-shape-out,
+[data-motion="still"] .kv-settle,
+[data-motion="still"] .kv-settle-group > *,
+.kv-swap-in[data-motion="still"],
+.kv-swap-out[data-motion="still"],
+.kv-shape-in[data-motion="still"],
+.kv-shape-out[data-motion="still"],
+.kv-settle[data-motion="still"],
+.kv-settle-group[data-motion="still"] > * {
+  animation: none !important;
+}
+
+[data-motion="still"] .kv-list,
+.kv-list[data-motion="still"] {
+  transition: none !important;
+}
