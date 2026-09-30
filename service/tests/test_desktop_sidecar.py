@@ -67,6 +67,14 @@ def test_sidecar_closes_server_without_announcing_when_health_never_arrives():
     assert server.close_called
 
 
+#: The sidecar is a real subprocess that imports the service app before it
+#: prints anything. 30s held locally and did not on CI, where the macOS job
+#: takes about 1.5h for the suite and this one line has been the only failure
+#: on main since 2026-09-01. Generous, because the cost of being wrong here is
+#: a red main.
+READY_TIMEOUT = 180
+
+
 def test_sidecar_process_serves_health_and_exits_when_parent_pipe_closes():
     process = subprocess.Popen(
         [sys.executable, "-m", "desktop.sidecar"],
@@ -83,7 +91,17 @@ def test_sidecar_process_serves_health_and_exits_when_parent_pipe_closes():
     reader.start()
 
     try:
-        ready = json.loads(lines.get(timeout=30))
+        try:
+            announced = lines.get(timeout=READY_TIMEOUT)
+        except queue.Empty:
+            # A bare queue.Empty says nothing about why the child was silent.
+            process.kill()
+            _, errors = process.communicate(timeout=10)
+            raise AssertionError(
+                f"the sidecar announced nothing in {READY_TIMEOUT}s; "
+                f"stderr:\n{errors}"
+            ) from None
+        ready = json.loads(announced)
         assert ready["event"] == "ready"
         base_url = ready["url"]
         with urllib.request.urlopen(f"{base_url}/healthz", timeout=5) as response:
